@@ -1,20 +1,30 @@
-# VPS. Установка:
-#   mkdir -p ~/.config/systemd/user && cp deploy/tgbridge-server.service ~/.config/systemd/user/
-#   loginctl enable-linger $USER      # чтобы жил без активной сессии
-#   systemctl --user daemon-reload && systemctl --user enable --now tgbridge-server
-#   journalctl --user -u tgbridge-server -f
+# VPS — системный юнит. Ставится скриптом deploy/vps-setup.sh в
+# /etc/systemd/system/tgbridge-server.service. Слушает только 127.0.0.1:8090
+# (наружу не торчит — агент приходит через SSH-туннель).
+#   systemctl restart tgbridge-server
+#   journalctl -u tgbridge-server -f
 [Unit]
-Description=tgbridge server (Telegram bot + HTTP API)
+Description=tgbridge server (Telegram bot + local HTTP API on 127.0.0.1:8090)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/tgbridge
-EnvironmentFile=%h/tgbridge/.env
-ExecStart=%h/tgbridge/.venv/bin/tgbridge-server
+User=tgbridge
+Group=tgbridge
+Environment=HOME=/opt/tgbridge
+WorkingDirectory=/opt/tgbridge/app
+EnvironmentFile=/opt/tgbridge/app/.env
+ExecStart=/opt/tgbridge/.local/bin/uv run --no-sync tgbridge-server
 Restart=always
 RestartSec=3
 
+# изоляция: пишет только в свой каталог
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tgbridge
+
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

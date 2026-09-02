@@ -1,0 +1,26 @@
+# WSL (домашняя машина) — user-юнит. SSH-туннель до VPS:
+#   локальный 127.0.0.1:8090  ->  VPS 127.0.0.1:8090
+# Сервер на VPS наружу не открыт, агент ходит через этот туннель.
+# Ставится скриптом deploy/wsl-setup.sh. Управление:
+#   systemctl --user status tgbridge-tunnel
+#   journalctl --user -u tgbridge-tunnel -f
+[Unit]
+Description=SSH tunnel to tgbridge VPS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# -N: не выполнять команд, -T: без tty; ExitOnForwardFailure + ServerAlive => падаем и рестартимся при обрыве
+ExecStart=/usr/bin/ssh -NT \
+  -o BatchMode=yes \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -L 127.0.0.1:8090:127.0.0.1:8090 \
+  root@212.192.212.220
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

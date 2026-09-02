@@ -1,12 +1,11 @@
-# WSL (домашняя машина). Требует systemd=true в /etc/wsl.conf. Установка:
-#   mkdir -p ~/.config/systemd/user && cp deploy/tgbridge-agent.service ~/.config/systemd/user/
-#   loginctl enable-linger $USER      # чтобы агент стартовал вместе с WSL, без входа в сессию
-#   systemctl --user daemon-reload && systemctl --user enable --now tgbridge-agent
+# WSL (домашняя машина) — user-юнит. Требует systemd=true в /etc/wsl.conf.
+# Ставится скриптом deploy/wsl-setup.sh. Управление:
+#   systemctl --user status tgbridge-agent
 #   journalctl --user -u tgbridge-agent -f
 [Unit]
-Description=tgbridge agent (pulls prompts from VPS, runs claude -p)
-After=network-online.target
-Wants=network-online.target
+Description=tgbridge agent (pulls prompts from VPS via tunnel, runs claude -p)
+After=network-online.target tgbridge-tunnel.service
+Wants=network-online.target tgbridge-tunnel.service
 
 [Service]
 Type=simple

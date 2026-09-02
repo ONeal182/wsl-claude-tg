@@ -31,7 +31,7 @@ uv run tgbridge-agent                # WSL
 uv run tgnotify "проверка"           # WSL
 ```
 
-Автозапуск — юниты в `deploy/` (см. комментарии внутри файлов).
+Продакшн-развёртывание (VPS + SSH-туннель + автозапуск) — см. **[deploy/DEPLOY.md](deploy/DEPLOY.md)**.
 
 ## Синхронность кода и документации
 
