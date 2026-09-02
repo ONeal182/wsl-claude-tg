@@ -71,6 +71,34 @@ def test_notify_without_session_id_has_no_button(client):
     assert client._app.state.bot.send_message.await_args.kwargs.get("reply_markup") is None
 
 
+def test_projects_endpoint_requires_auth(client):
+    assert client.post("/projects", json={"projects": []}).status_code == 401
+
+
+def test_projects_endpoint_syncs_into_table(client):
+    r = client.post(
+        "/projects",
+        json={"projects": [
+            {"name": "tgbridge", "path": "/home/oneal/tgbridge"},
+            {"name": "blog", "path": "/home/oneal/blog"},
+        ]},
+        headers=AUTH,
+    )
+    assert r.status_code == 200 and r.json() == {"added": 2}
+    names = [p["name"] for p in client._app.state.db.projects()]
+    assert names == ["blog", "tgbridge"]
+
+
+def test_commands_next_carries_cwd(client):
+    db = client._app.state.db
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    db.select_project(db.projects()[0]["id"])
+    db.enqueue(prompt="p", chat_id=1)
+
+    r = client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    assert r.json()["cwd"] == "/home/oneal/tgbridge"
+
+
 def test_commands_next_empty_204(client):
     assert client.get("/commands/next", params={"timeout": 1}, headers=AUTH).status_code == 204
 
@@ -89,6 +117,7 @@ def test_queue_roundtrip(client):
         "chat_id": 42,
         "fresh": False,
         "resume_from": "",
+        "cwd": "",
     }
 
     # уже leased -> очередь пуста

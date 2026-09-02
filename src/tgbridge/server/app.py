@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 
 from ..config import Settings, load
 from ..db import DB
-from ..models import NotifyIn, ResultIn
+from ..models import NotifyIn, ProjectsIn, ResultIn
 from .auth import make_auth_dep
 from .bot import build_dispatcher, render_md_chunks, resume_keyboard, run_bot
 
@@ -105,6 +105,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mark = {"info": "ℹ️", "warn": "⚠️", "error": "🔴"}[body.level]
         await notify_chats(app.state.bot, f"{mark} {body.text}", body.session_id)
         return {"ok": True}
+
+    @app.post("/projects", dependencies=[auth])
+    async def projects_sync(body: ProjectsIn) -> dict[str, int]:
+        db: DB = app.state.db
+        added = db.sync_projects([(p.name, p.path) for p in body.projects])
+        return {"added": added}
 
     @app.get("/commands/next", dependencies=[auth])
     async def commands_next(timeout: float = 25.0) -> Response:

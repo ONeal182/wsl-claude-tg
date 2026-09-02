@@ -18,7 +18,7 @@ uv sync
 [ -f .env ] || { cp .env.example .env; chmod 600 .env; }
 sed -i 's|^TGBRIDGE_SERVER_URL=.*|TGBRIDGE_SERVER_URL=http://127.0.0.1:8090|' .env
 echo ">>> .env: TGBRIDGE_TOKEN должен совпадать со значением на VPS"
-grep -E '^TGBRIDGE_(TOKEN|SERVER_URL|WORKDIR|CLAUDE_BIN)=' .env | sed 's/\(TOKEN=\).*/\1***/'
+grep -E '^TGBRIDGE_(TOKEN|SERVER_URL|WORKDIR|CLAUDE_BIN|PROJECTS_ROOT)=' .env | sed 's/\(TOKEN=\).*/\1***/'
 
 # --- systemd user units ---
 mkdir -p ~/.config/systemd/user

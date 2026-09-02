@@ -26,6 +26,22 @@ class CommandOut(BaseModel):
     fresh: bool = False  # True -> агент стартует новую сессию Claude, иначе --continue
     # непусто -> агент делает `claude -p --resume <id> --fork-session` (перевешивает fresh)
     resume_from: str = ""
+    # непусто -> агент запускает claude в этой директории (выбранный проект);
+    # пусто -> берётся собственный TGBRIDGE_WORKDIR агента
+    cwd: str = ""
+
+
+class ProjectItem(BaseModel):
+    """Один проект: имя папки + абсолютный путь к ней в WSL."""
+
+    name: str = Field(min_length=1, max_length=200)
+    path: str = Field(min_length=1, max_length=2000)
+
+
+class ProjectsIn(BaseModel):
+    """Список проектов, который агент синхронизирует на сервер (POST /projects)."""
+
+    projects: list[ProjectItem] = Field(default_factory=list, max_length=1000)
 
 
 class ResultIn(BaseModel):

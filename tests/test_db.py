@@ -211,6 +211,43 @@ def test_finish_records_session_when_id_present(db: DB):
     )
 
 
+def test_finish_lazily_registers_project_from_cwd(db: DB):
+    # проект ещё не синхронизирован — берём путь напрямую в session_state
+    db._conn.execute("UPDATE session_state SET project_id = NULL")
+    cid = db.enqueue("сделай", 1)
+    db.lease_next()
+    db._conn.execute("UPDATE commands SET cwd = '/home/oneal/fresh-proj' WHERE id = ?", (cid,))
+    db._conn.commit()
+
+    db.finish(cid, ok=True, output="готово", session_id="sess-1")
+
+    projs = db.projects()
+    assert [(p["name"], p["path"]) for p in projs] == [("fresh-proj", "/home/oneal/fresh-proj")]
+    row = db.sessions()[0]
+    assert row["session_id"] == "sess-1" and row["project_id"] == projs[0]["id"]
+    assert row["project_name"] == "fresh-proj"
+
+
+def test_finish_reuses_existing_project_no_duplicate(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    pid = db.projects()[0]["id"]
+    db.select_project(pid)
+    cid = db.enqueue("p", 1)
+    db.lease_next()
+    db.finish(cid, ok=True, output="ok", session_id="sess-9")
+
+    assert len(db.projects()) == 1
+    assert db.sessions()[0]["project_id"] == pid
+
+
+def test_finish_without_cwd_leaves_session_project_null(db: DB):
+    cid = db.enqueue("p", 1)
+    db.lease_next()
+    db.finish(cid, ok=True, output="ok", session_id="sess-x")
+    row = db.sessions()[0]
+    assert row["project_id"] is None and row["project_name"] is None
+
+
 def test_finish_without_session_id_records_nothing(db: DB):
     cid = db.enqueue("p", 1)
     db.lease_next()
@@ -218,10 +255,111 @@ def test_finish_without_session_id_records_nothing(db: DB):
     assert db.sessions() == []
 
 
+def test_sync_projects_inserts_new_returns_added_count(db: DB):
+    added = db.sync_projects([("tgbridge", "/home/oneal/tgbridge"), ("blog", "/home/oneal/blog")])
+    assert added == 2
+    assert [(r["name"], r["path"]) for r in db.projects()] == [
+        ("blog", "/home/oneal/blog"),
+        ("tgbridge", "/home/oneal/tgbridge"),
+    ]
+
+
+def test_sync_projects_skips_existing_paths(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    added = db.sync_projects(
+        [("tgbridge", "/home/oneal/tgbridge"), ("new", "/home/oneal/new")]
+    )
+    assert added == 1
+    assert len(db.projects()) == 2
+
+
+def test_projects_respects_limit(db: DB):
+    db.sync_projects([(f"p{i}", f"/home/oneal/p{i}") for i in range(5)])
+    assert len(db.projects(limit=3)) == 3
+
+
+def test_select_project_returns_row_and_marks_next_fresh(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    pid = db.projects()[0]["id"]
+    db.enqueue("сид", 1)
+    db.lease_next()  # съесть стартовый fresh
+
+    row = db.select_project(pid)
+    assert (row["name"], row["path"]) == ("tgbridge", "/home/oneal/tgbridge")
+
+    db.enqueue("первый в проекте", 1)
+    got = db.lease_next()
+    assert got.fresh is True and got.cwd == "/home/oneal/tgbridge"
+
+
+def test_select_project_unknown_id_returns_none_and_changes_nothing(db: DB):
+    assert db.select_project(999) is None
+    db.enqueue("p", 1)
+    assert db.lease_next().cwd == ""
+
+
+def test_selected_project_is_sticky_across_commands(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    db.select_project(db.projects()[0]["id"])
+    db.enqueue("раз", 1)
+    db.enqueue("два", 1)
+    a, b = db.lease_next(), db.lease_next()
+    assert a.cwd == "/home/oneal/tgbridge" and a.fresh is True
+    assert b.cwd == "/home/oneal/tgbridge" and b.fresh is False
+
+
+def test_enqueue_without_selected_project_leaves_cwd_empty(db: DB):
+    db.enqueue("p", 1)
+    assert db.lease_next().cwd == ""
+
+
+def test_select_project_clears_pending_resume(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    db.request_resume("sess-xyz")
+    db.select_project(db.projects()[0]["id"])
+    db.enqueue("p", 1)
+    got = db.lease_next()
+    assert got.resume_from == "" and got.fresh is True
+
+
 def test_log_notification_persists(db: DB):
     db.log_notification("hello", "warn")
     row = db._conn.execute("SELECT text, level FROM notifications").fetchone()
     assert (row["text"], row["level"]) == ("hello", "warn")
+
+
+def test_migrate_adds_project_columns_to_old_db(tmp_path):
+    path = str(tmp_path / "old.sqlite3")
+    raw = __import__("sqlite3").connect(path)
+    raw.executescript(
+        """
+        CREATE TABLE commands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, prompt TEXT NOT NULL,
+            chat_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
+            output TEXT NOT NULL DEFAULT '', ok INTEGER, created_at REAL NOT NULL,
+            leased_at REAL, done_at REAL
+        );
+        CREATE TABLE session_state (id INTEGER PRIMARY KEY CHECK (id = 1),
+            reset_pending INTEGER NOT NULL DEFAULT 1);
+        INSERT INTO session_state (id, reset_pending) VALUES (1, 1);
+        CREATE TABLE sessions (session_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+            last_result TEXT NOT NULL DEFAULT '', turns INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL, updated_at REAL NOT NULL);
+        CREATE TABLE notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL,
+            level TEXT NOT NULL, created_at REAL NOT NULL);
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    d = DB(path)  # не должно бросить
+    d.sync_projects([("p", "/home/oneal/p")])
+    d.select_project(d.projects()[0]["id"])
+    cid = d.enqueue("go", 1)
+    assert d.lease_next().cwd == "/home/oneal/p"
+    d.finish(cid, ok=True, output="ok", session_id="s-mig")
+    assert d.sessions()[0]["project_name"] == "p"
+    d.close()
 
 
 def test_schema_survives_reopen(tmp_path):

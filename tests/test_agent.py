@@ -53,6 +53,28 @@ def _capture_argv(monkeypatch, proc):
     return seen
 
 
+# --- scan_projects ---------------------------------------------------
+
+
+def test_scan_projects_returns_non_hidden_dirs(tmp_path):
+    (tmp_path / "blog").mkdir()
+    (tmp_path / "tgbridge").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "notes.txt").write_text("x")
+    assert main.scan_projects(str(tmp_path)) == [
+        ("blog", str(tmp_path / "blog")),
+        ("tgbridge", str(tmp_path / "tgbridge")),
+    ]
+
+
+def test_scan_projects_missing_root(tmp_path):
+    assert main.scan_projects(str(tmp_path / "nope")) == []
+
+
+def test_scan_projects_empty_root():
+    assert main.scan_projects("") == []
+
+
 # --- run_prompt --------------------------------------------------------
 
 
@@ -134,6 +156,29 @@ async def test_run_prompt_resume_beats_fresh(settings, monkeypatch):
     assert "--resume" in argv and "--fork-session" in argv
 
 
+def _capture_kw(monkeypatch, proc):
+    seen: dict = {}
+
+    async def _fake(*argv, **kw):
+        seen.update(kw)
+        return proc
+
+    monkeypatch.setattr(main.asyncio, "create_subprocess_exec", _fake)
+    return seen
+
+
+async def test_run_prompt_runs_in_cmd_cwd(settings, monkeypatch):
+    kw = _capture_kw(monkeypatch, FakeProc(_envelope("ok", "s"), 0))
+    await main.run_prompt(settings, "hi", cwd="/home/oneal/proj")
+    assert kw["cwd"] == "/home/oneal/proj"
+
+
+async def test_run_prompt_defaults_cwd_to_workdir(settings, monkeypatch):
+    kw = _capture_kw(monkeypatch, FakeProc(_envelope("ok", "s"), 0))
+    await main.run_prompt(settings, "hi")
+    assert kw["cwd"] == settings.workdir
+
+
 async def test_run_prompt_timeout_kills(settings, monkeypatch):
     proc = FakeProc(b"", 0)
     _patch_exec(monkeypatch, proc)
@@ -166,10 +211,11 @@ async def test_handle_forwards_session_flags_to_run_prompt(settings, monkeypatch
     monkeypatch.setattr(main, "run_prompt", rp)
     client = AsyncMock()
     client.post.return_value.raise_for_status = lambda: None
-    cmd = CommandOut(id=7, prompt="p", chat_id=1, fresh=True, resume_from="sess-abc")
+    cmd = CommandOut(id=7, prompt="p", chat_id=1, fresh=True, resume_from="sess-abc", cwd="/x")
     await main.handle(client, settings, cmd)
     assert rp.await_args.kwargs.get("fresh") is True
     assert rp.await_args.kwargs.get("resume_from") == "sess-abc"
+    assert rp.await_args.kwargs.get("cwd") == "/x"
 
 
 async def test_handle_retries_then_succeeds(settings, monkeypatch):
@@ -251,6 +297,46 @@ async def test_loop_dispatches_command(settings, monkeypatch):
         await main.loop(settings)
     handled.assert_awaited_once()
     assert handled.await_args.args[2] == CommandOut(id=3, prompt="do", chat_id=8)
+
+
+async def test_push_projects_posts_scanned_list(settings, monkeypatch, tmp_path):
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "beta").mkdir()
+    monkeypatch.setattr(settings, "projects_root", str(tmp_path))
+    client = AsyncMock()
+    client.post.return_value.raise_for_status = lambda: None
+
+    await main.push_projects(client, settings)
+
+    url, kw = client.post.await_args.args[0], client.post.await_args.kwargs
+    assert url == "/projects"
+    names = [p["name"] for p in kw["json"]["projects"]]
+    assert names == ["alpha", "beta"]
+
+
+async def test_push_projects_noop_when_root_unset(settings, monkeypatch):
+    monkeypatch.setattr(settings, "projects_root", "")
+    client = AsyncMock()
+    await main.push_projects(client, settings)
+    client.post.assert_not_awaited()
+
+
+async def test_push_projects_swallows_http_error(settings, monkeypatch, tmp_path):
+    (tmp_path / "alpha").mkdir()
+    monkeypatch.setattr(settings, "projects_root", str(tmp_path))
+    client = AsyncMock()
+    client.post.side_effect = httpx.ConnectError("down")
+    await main.push_projects(client, settings)  # не должно бросить
+
+
+async def test_loop_syncs_projects_before_polling(settings, monkeypatch):
+    fake = FakeClient([asyncio.CancelledError()])
+    _install_client(monkeypatch, fake)
+    pushed = AsyncMock()
+    monkeypatch.setattr(main, "push_projects", pushed)
+    with pytest.raises(asyncio.CancelledError):
+        await main.loop(settings)
+    pushed.assert_awaited_once()
 
 
 async def test_loop_backoff_on_http_error(settings, monkeypatch):

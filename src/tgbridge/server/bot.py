@@ -30,6 +30,7 @@ log = logging.getLogger("tgbridge.bot")
 
 # (команда, описание) — попадает в меню-кнопку бота через set_my_commands
 COMMANDS: list[tuple[str, str]] = [
+    ("select_project", "выбрать проект для новой сессии"),
     ("new", "новая сессия, контекст сохранить (форк текущей)"),
     ("clear", "новая сессия с чистого листа"),
     ("resume", "продолжить сессию Claude по id (форк)"),
@@ -44,6 +45,7 @@ START_TEXT = (
     "tgbridge на связи.\n"
     "Пришли текст — он уйдёт в WSL как промпт для Claude Code.\n"
     "Каждый следующий промпт продолжает тот же разговор.\n"
+    "/select_project — выбрать проект, в котором крутить сессию\n"
     "/new — новая сессия, но контекст сохранить (форк текущей)\n"
     "/clear — новая сессия с чистого листа (забыть контекст)\n"
     "/resume <id> — продолжить конкретную сессию Claude (в новой ветке)\n"
@@ -115,6 +117,60 @@ def resume_keyboard(session_id: str) -> InlineKeyboardMarkup | None:
     )
 
 
+PROJECT_CB_PREFIX = "project:"
+
+
+def projects_keyboard(rows: list) -> InlineKeyboardMarkup | None:
+    """Кнопки /select_project: по кнопке на проект, callback_data = project:<id>."""
+    if not rows:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=r["name"], callback_data=f"{PROJECT_CB_PREFIX}{r['id']}"
+                )
+            ]
+            for r in rows
+        ]
+    )
+
+
+def select_project_reply(
+    user_id: int, allowed_ids: set[int], db: DB
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """/select_project: показать список проектов кнопками."""
+    if user_id not in allowed_ids:
+        return "не в allowlist, игнорирую", None
+    rows = db.projects()
+    if not rows:
+        return (
+            "список проектов пуст — агент ещё не прислал скан "
+            "(проверь TGBRIDGE_PROJECTS_ROOT в WSL)",
+            None,
+        )
+    return "📂 выбери проект для новой сессии:", projects_keyboard(rows)
+
+
+def picked_project_reply(
+    user_id: int, allowed_ids: set[int], db: DB, raw_id: str
+) -> str:
+    """Нажали кнопку проекта: сделать его текущим, следующий промпт — новая сессия в нём."""
+    if user_id not in allowed_ids:
+        return "не в allowlist, игнорирую"
+    try:
+        project_id = int((raw_id or "").strip())
+    except ValueError:
+        return "не разобрал id проекта"
+    row = db.select_project(project_id)
+    if row is None:
+        return "проект не найден"
+    return (
+        f"📂 проект `{row['name']}` выбран — следующий промпт стартует "
+        f"новую сессию в `{row['path']}`"
+    )
+
+
 def id_reply(user_id: int, allowed_ids: set[int]) -> str:
     mark = "да" if user_id in allowed_ids else "НЕТ — добавь в TGBRIDGE_ALLOWED_USER_IDS"
     return f"твой id: `{user_id}`\nв allowlist: {mark}"
@@ -178,7 +234,8 @@ def sessions_reply(
     lines: list[str] = []
     for r in rows:
         when = time.strftime("%d.%m %H:%M", time.localtime(r["updated_at"]))
-        lines.append(f"`{r['session_id']}` · {r['turns']} реплик · {when}")
+        proj = f" · 📂 {r['project_name']}" if r["project_name"] else ""
+        lines.append(f"`{r['session_id']}` · {r['turns']} реплик · {when}{proj}")
         if r["title"]:
             lines.append(f"  {_clip_preview(r['title'])}")
         if r["last_result"]:
@@ -236,6 +293,12 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
     async def on_ping(msg: Message) -> None:
         await msg.answer("pong")
 
+    @dp.message(Command("select_project"))
+    async def on_select_project(msg: Message, db: DB) -> None:
+        uid = msg.from_user.id if msg.from_user else 0
+        text, kb = select_project_reply(uid, allowed_ids, db)
+        await msg.answer(text, reply_markup=kb)
+
     @dp.message(Command("clear"))
     async def on_clear(msg: Message, db: DB) -> None:
         uid = msg.from_user.id if msg.from_user else 0
@@ -273,6 +336,12 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
         uid = cb.from_user.id if cb.from_user else 0
         sid = (cb.data or "")[len(RESUME_CB_PREFIX):]
         await cb.answer(resume_reply(uid, allowed_ids, db, sid)[:200])
+
+    @dp.callback_query(F.data.startswith(PROJECT_CB_PREFIX))
+    async def on_project_cb(cb: CallbackQuery, db: DB) -> None:
+        uid = cb.from_user.id if cb.from_user else 0
+        raw = (cb.data or "")[len(PROJECT_CB_PREFIX):]
+        await cb.answer(picked_project_reply(uid, allowed_ids, db, raw)[:200])
 
     return dp
 

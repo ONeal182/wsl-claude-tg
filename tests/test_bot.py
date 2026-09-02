@@ -15,11 +15,13 @@ from tgbridge.server.bot import (
     history_reply,
     id_reply,
     new_reply,
+    picked_project_reply,
     prompt_reply,
     render_md_chunks,
     resume_keyboard,
     resume_reply,
     run_bot,
+    select_project_reply,
     sessions_reply,
 )
 
@@ -147,12 +149,77 @@ def test_sessions_reply_lists_id_and_title(db: DB):
     assert "почини парсер" in out
 
 
+def test_sessions_reply_shows_project_name(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    pid = db.projects()[0]["id"]
+    db.select_project(pid)
+    cid = db.enqueue("почини парсер", 1)
+    db.lease_next()
+    db.finish(cid, ok=True, output="ок", session_id="sess-proj")
+    out = sessions_reply(466404679, ALLOWED, db)
+    assert "tgbridge" in out
+
+
 def test_sessions_reply_empty(db: DB):
     assert "нет" in sessions_reply(466404679, ALLOWED, db).lower()
 
 
 def test_sessions_reply_rejects_stranger(db: DB):
     assert "не в allowlist" in sessions_reply(111, ALLOWED, db)
+
+
+def test_select_project_reply_lists_projects_as_buttons(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge"), ("blog", "/home/oneal/blog")])
+    text, kb = select_project_reply(466404679, ALLOWED, db)
+    assert "проект" in text.lower()
+    labels = [b.text for row in kb.inline_keyboard for b in row]
+    assert labels == ["blog", "tgbridge"]
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row]
+    assert all(c.startswith("project:") for c in cbs)
+
+
+def test_select_project_reply_empty_no_keyboard(db: DB):
+    text, kb = select_project_reply(466404679, ALLOWED, db)
+    assert kb is None and "пуст" in text.lower()
+
+
+def test_select_project_reply_rejects_stranger(db: DB):
+    text, kb = select_project_reply(111, ALLOWED, db)
+    assert "не в allowlist" in text and kb is None
+
+
+def test_picked_project_reply_selects_project(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    pid = db.projects()[0]["id"]
+    db.enqueue("сид", 1)
+    db.lease_next()  # съесть стартовый fresh
+
+    out = picked_project_reply(466404679, ALLOWED, db, str(pid))
+    assert "tgbridge" in out
+
+    db.enqueue("поехали", 1)
+    got = db.lease_next()
+    assert got.cwd == "/home/oneal/tgbridge" and got.fresh is True
+
+
+def test_picked_project_reply_unknown_id(db: DB):
+    out = picked_project_reply(466404679, ALLOWED, db, "999")
+    assert "не найд" in out.lower()
+
+
+def test_picked_project_reply_garbage_id(db: DB):
+    out = picked_project_reply(466404679, ALLOWED, db, "abc")
+    assert out  # не бросает
+
+
+def test_picked_project_reply_rejects_stranger(db: DB):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    out = picked_project_reply(111, ALLOWED, db, str(db.projects()[0]["id"]))
+    assert "не в allowlist" in out
+    db.enqueue("p", 1)
+    db.lease_next()
+    db.enqueue("q", 1)
+    assert db.lease_next().cwd == ""
 
 
 def test_render_md_chunks_empty_input():
@@ -203,7 +270,10 @@ def test_history_reply_rejects_stranger(db: DB):
 
 def test_bot_commands_cover_every_handler():
     names = {c.command for c in bot_commands()}
-    assert {"start", "new", "clear", "resume", "sessions", "history", "id", "ping"} <= names
+    assert {
+        "start", "new", "clear", "resume", "sessions", "history", "id", "ping",
+        "select_project",
+    } <= names
     assert all(c.description for c in bot_commands())
 
 
@@ -320,6 +390,52 @@ async def test_dispatcher_resume_without_arg_shows_usage(bot, db: DB, answers):
     dp = build_dispatcher(ALLOWED)
     await dp.feed_raw_update(bot, _raw("/resume", 466404679), db=db, wake=asyncio.Event())
     assert answers and "/resume" in answers[0]
+
+
+async def test_dispatcher_select_project_lists(bot, db: DB, monkeypatch):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    sent: list[tuple[str, object]] = []
+
+    async def fake_answer(self, text, **kw):  # noqa: ANN001
+        sent.append((text, kw.get("reply_markup")))
+
+    monkeypatch.setattr("aiogram.types.Message.answer", fake_answer)
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(
+        bot, _raw("/select_project", 466404679), db=db, wake=asyncio.Event()
+    )
+    assert sent and sent[0][1] is not None
+    assert sent[0][1].inline_keyboard[0][0].callback_data.startswith("project:")
+
+
+async def test_dispatcher_project_button_selects(bot, db: DB, monkeypatch):
+    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+    pid = db.projects()[0]["id"]
+    toasts: list[str] = []
+
+    async def fake_cb_answer(self, text=None, **kw):  # noqa: ANN001
+        toasts.append(text or "")
+
+    monkeypatch.setattr("aiogram.types.CallbackQuery.answer", fake_cb_answer)
+    upd = {
+        "update_id": 3,
+        "callback_query": {
+            "id": "cb3",
+            "chat_instance": "ci",
+            "from": {"id": 466404679, "is_bot": False, "first_name": "T"},
+            "data": f"project:{pid}",
+            "message": {
+                "message_id": 7,
+                "date": int(time.time()),
+                "chat": {"id": 466404679, "type": "private"},
+            },
+        },
+    }
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(bot, upd, db=db, wake=asyncio.Event())
+    assert toasts and "tgbridge" in toasts[0]
+    db.enqueue("go", 1)
+    assert db.lease_next().cwd == "/home/oneal/tgbridge"
 
 
 async def test_dispatcher_sessions_lists(bot, db: DB, answers):

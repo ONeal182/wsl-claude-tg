@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     claude_bin: str = "claude"
     workdir: str = "."
     prompt_timeout: int = Field(default=300, ge=10)
+    # корень с проектами для /select_project; пусто -> агент список не синхронит
+    projects_root: str = ""
 
     @property
     def allowed_ids(self) -> set[int]:

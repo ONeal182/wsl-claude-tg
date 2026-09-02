@@ -14,15 +14,35 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from pathlib import Path
 
 import httpx
 
 from ..config import Settings, load
-from ..models import CommandOut, ResultIn
+from ..models import CommandOut, ProjectsIn, ResultIn
 
 log = logging.getLogger("tgbridge.agent")
 
 MAX_OUTPUT = 8000  # больше в Telegram всё равно не уедет
+PROJECTS_SYNC_EVERY = 300  # сек между синхронизациями списка проектов на сервер
+
+
+def scan_projects(root: str) -> list[tuple[str, str]]:
+    """Не-скрытые подпапки первого уровня в root -> [(имя, абсолютный путь)], по алфавиту.
+
+    Пустой root или недоступная папка -> []. Служит источником для /select_project.
+    """
+    if not root:
+        return []
+    base = Path(root).expanduser()
+    try:
+        dirs = sorted(
+            p for p in base.iterdir() if p.is_dir() and not p.name.startswith(".")
+        )
+    except OSError:
+        return []
+    return [(p.name, str(p)) for p in dirs]
 
 
 def _parse_output(raw_out: bytes, raw_err: bytes, rc: int) -> tuple[bool, str, str]:
@@ -43,7 +63,7 @@ def _parse_output(raw_out: bytes, raw_err: bytes, rc: int) -> tuple[bool, str, s
 
 
 async def run_prompt(
-    cfg: Settings, prompt: str, fresh: bool = False, resume_from: str = ""
+    cfg: Settings, prompt: str, fresh: bool = False, resume_from: str = "", cwd: str = ""
 ) -> tuple[bool, str, str]:
     """Выполнить промпт через `claude -p` в headless-режиме. Вернуть (ok, вывод, session_id).
 
@@ -51,6 +71,8 @@ async def run_prompt(
         сессию, но в новой ветке (исходная не затрагивается). Перевешивает `fresh`.
     `fresh=True`  — начать новую сессию Claude (после /clear, /new или самый первый промпт).
     `fresh=False` — `--continue`: подхватить контекст предыдущего разговора в workdir.
+    `cwd` (непусто) — запускать claude в этой директории (выбранный проект);
+        пусто -> собственный `cfg.workdir` агента.
     """
     argv = [cfg.claude_bin, "-p", "--output-format", "json"]
     if resume_from:
@@ -61,7 +83,7 @@ async def run_prompt(
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
-            cwd=cfg.workdir,
+            cwd=cwd or cfg.workdir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -80,13 +102,30 @@ async def run_prompt(
     return _parse_output(raw_out, raw_err, proc.returncode or 0)
 
 
+async def push_projects(client: httpx.AsyncClient, cfg: Settings) -> None:
+    """Отправить скан TGBRIDGE_PROJECTS_ROOT на сервер (для /select_project). Best-effort.
+
+    Пустой корень или недоступная папка -> тихо ничего не делаем.
+    """
+    items = scan_projects(cfg.projects_root)
+    if not items:
+        return
+    body = ProjectsIn(projects=[{"name": n, "path": p} for n, p in items])
+    try:
+        r = await client.post("/projects", json=body.model_dump())
+        r.raise_for_status()
+        log.info("список проектов синхронизирован: %d шт.", len(items))
+    except httpx.HTTPError as e:
+        log.warning("не отправил список проектов: %s", e)
+
+
 async def handle(client: httpx.AsyncClient, cfg: Settings, cmd: CommandOut) -> None:
     log.info(
-        "задача #%s (fresh=%s resume_from=%s): %s",
-        cmd.id, cmd.fresh, cmd.resume_from or "-", cmd.prompt[:80],
+        "задача #%s (fresh=%s resume_from=%s cwd=%s): %s",
+        cmd.id, cmd.fresh, cmd.resume_from or "-", cmd.cwd or "-", cmd.prompt[:80],
     )
     ok, output, session_id = await run_prompt(
-        cfg, cmd.prompt, fresh=cmd.fresh, resume_from=cmd.resume_from
+        cfg, cmd.prompt, fresh=cmd.fresh, resume_from=cmd.resume_from, cwd=cmd.cwd
     )
     result = ResultIn(ok=ok, output=output, session_id=session_id)
     for attempt in range(5):
@@ -106,8 +145,13 @@ async def loop(cfg: Settings) -> None:
     backoff = 1
     async with httpx.AsyncClient(base_url=cfg.server_url, headers=headers, timeout=40) as client:
         log.info("агент запущен, сервер %s", cfg.server_url)
+        await push_projects(client, cfg)
+        last_sync = time.monotonic()
         while True:
             try:
+                if time.monotonic() - last_sync >= PROJECTS_SYNC_EVERY:
+                    await push_projects(client, cfg)
+                    last_sync = time.monotonic()
                 r = await client.get("/commands/next", params={"timeout": 25})
                 if r.status_code == 204:
                     backoff = 1

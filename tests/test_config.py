@@ -27,6 +27,7 @@ def test_defaults_are_safe():
     assert s.allowed_ids == set()
     assert s.port == 8080
     assert s.prompt_timeout == 300
+    assert s.projects_root == ""
 
 
 def test_prompt_timeout_floor():
