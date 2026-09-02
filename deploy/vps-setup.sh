@@ -22,11 +22,24 @@ id tgbridge >/dev/null 2>&1 || \
   useradd --system --create-home --home-dir "$HOME_DIR" --shell /usr/sbin/nologin tgbridge
 
 # --- deploy-ключ для приватного репозитория ---
+# GitHub по SSH ходим через ssh.github.com:443 (порт 22 с VPS часто закрыт).
 KEY="$HOME_DIR/.ssh/id_ed25519"
+install -d -o tgbridge -g tgbridge -m 700 "$HOME_DIR/.ssh"
+if [ ! -f "$HOME_DIR/.ssh/config" ]; then
+  cat > "$HOME_DIR/.ssh/config" <<SSHCFG
+Host github.com
+    HostName ssh.github.com
+    Port 443
+    User git
+    IdentityFile $HOME_DIR/.ssh/id_ed25519
+    IdentitiesOnly yes
+SSHCFG
+  chown tgbridge:tgbridge "$HOME_DIR/.ssh/config"
+  chmod 600 "$HOME_DIR/.ssh/config"
+fi
+sudo -u tgbridge sh -c "ssh-keyscan -p 443 -t ed25519 ssh.github.com >> '$HOME_DIR/.ssh/known_hosts' 2>/dev/null" || true
 if [ ! -f "$KEY" ]; then
-  install -d -o tgbridge -g tgbridge -m 700 "$HOME_DIR/.ssh"
   sudo -u tgbridge ssh-keygen -t ed25519 -N '' -f "$KEY" -C tgbridge-vps-deploy
-  sudo -u tgbridge sh -c "ssh-keyscan -t ed25519 github.com >> '$HOME_DIR/.ssh/known_hosts'" 2>/dev/null
   cat <<EOF
 
 ============================================================
@@ -42,12 +55,13 @@ EOF
 fi
 
 # --- код ---
+GIT=(sudo -u tgbridge env HOME="$HOME_DIR" git)
 if [ -d "$APP/.git" ]; then
-  sudo -u tgbridge git -C "$APP" fetch --prune origin
-  sudo -u tgbridge git -C "$APP" reset --hard origin/master
+  "${GIT[@]}" -C "$APP" fetch --prune origin
+  "${GIT[@]}" -C "$APP" reset --hard origin/master
 else
   rm -rf "$APP"
-  sudo -u tgbridge git clone "$REPO" "$APP"
+  "${GIT[@]}" clone "$REPO" "$APP"
 fi
 
 # --- uv (в хоум юзера) ---

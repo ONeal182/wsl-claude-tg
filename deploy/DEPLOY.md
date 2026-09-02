@@ -16,15 +16,20 @@ WSL (дом):  tgbridge-tunnel ──► tgbridge-agent ──► claude -p
 
 ## 1. VPS (от root)
 
+Скрипт самодостаточный — качается одним файлом, дальше клонирует репозиторий
+в `/opt/tgbridge/app` сам. GitHub по SSH идёт через `ssh.github.com:443`
+(порт 22 к GitHub с VPS закрыт) — это скрипт настраивает в `~tgbridge/.ssh/config`.
+
 ```bash
-git clone git@github.com:ONeal182/wsl-claude-tg.git /root/wsl-claude-tg   # или через HTTPS
-cd /root/wsl-claude-tg
-bash deploy/vps-setup.sh
+# доставить скрипт (с машины, где есть репозиторий):
+git show HEAD:deploy/vps-setup.sh | ssh root@212.192.212.220 'cat > /root/vps-setup.sh'
+# на VPS:
+ssh root@212.192.212.220 'bash /root/vps-setup.sh'
 ```
 
-Первый запуск напечатает **deploy-ключ** — добавь его в GitHub:
-репозиторий → Settings → Deploy keys → Add deploy key (**без** write access).
-Затем запусти скрипт ещё раз.
+Первый запуск создаёт юзера `tgbridge` и печатает **deploy-ключ** — добавь его
+в GitHub: репозиторий → Settings → Deploy keys → Add deploy key (**без** write access).
+Затем запусти скрипт ещё раз — он склонирует код и поставит зависимости.
 
 После клонирования скрипт создаст `/opt/tgbridge/app/.env` — впиши в него:
 
