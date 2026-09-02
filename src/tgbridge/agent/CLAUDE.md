@@ -19,7 +19,7 @@ GET {server_url}/commands/next?timeout=25
 
 - **`run_prompt(cfg, prompt, fresh, resume_from) -> (ok, вывод, session_id)`**: argv всегда `claude -p --output-format json`, дальше `resume_from` → `--resume <id> --fork-session` (перевешивает `fresh`), иначе `fresh` → ничего, иначе `--continue`; затем `asyncio.create_subprocess_exec(*argv, cwd=cfg.workdir)` (stdout/stderr раздельно), общий таймаут `cfg.prompt_timeout` → при превышении `proc.kill()`. `_parse_output()`: json → `.result`/`.session_id`/`.is_error`; не-json (краш до печати конверта) → сырой `stdout+stderr`, `session_id=""`. `FileNotFoundError` (нет бинаря `claude`) — обычный неуспешный результат, не роняет цикл. Оба флага приходят из `CommandOut` — решение принимает VPS, не агент.
 - **Промпт не парсится и не экранируется** — уходит в `claude` одним argv-элементом (не через shell). Расширяя поведение, не собирай команду строкой.
-- Результат режется по `MAX_OUTPUT` здесь и ещё раз на сервере — не полагайся на один слой.
+- Результат режется по `MAX_OUTPUT` здесь. Сервер его больше не обрезает — рендерит в MarkdownV2 и бьёт на несколько сообщений; но верхний предел `MAX_OUTPUT` всё равно за агентом.
 - Backoff сбрасывается в 1 после любого успешного ответа (в т.ч. `204`).
 - Падение процесса безопасно: незакрытая задача на сервере через `LEASE_TTL` вернётся в очередь. Ретраи `POST result` — 5 попыток, дальше результат теряется (лог `результат #N потерян`).
 

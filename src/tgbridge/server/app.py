@@ -13,10 +13,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import InlineKeyboardMarkup
 from fastapi import Depends, FastAPI, Response
 from fastapi.responses import JSONResponse
 
@@ -24,15 +27,31 @@ from ..config import Settings, load
 from ..db import DB
 from ..models import NotifyIn, ResultIn
 from .auth import make_auth_dep
-from .bot import build_dispatcher, resume_keyboard, run_bot
+from .bot import build_dispatcher, render_md_chunks, resume_keyboard, run_bot
 
 log = logging.getLogger("tgbridge.server")
 
-MAX_TG_LEN = 3800  # запас под лимит Telegram в 4096
+
+def _strip_markdownv2(s: str) -> str:
+    """Снять экранирование MarkdownV2 — грубый фолбэк, если Telegram не принял разметку."""
+    return re.sub(r"\\([_*\[\]()~`>#+\-=|{}.!\\])", r"\1", s)
 
 
-def _clip(text: str) -> str:
-    return text if len(text) <= MAX_TG_LEN else text[:MAX_TG_LEN] + "\n…(обрезано)"
+async def send_md(
+    bot: Bot, chat_id: int, text: str, markup: InlineKeyboardMarkup | None = None
+) -> None:
+    """Отправить текст Claude в Telegram: MarkdownV2, длинное — несколькими сообщениями.
+
+    Кнопка (`markup`) вешается только под последним куском. Если Telegram отверг
+    разметку куска — тот же кусок уходит плоским текстом.
+    """
+    chunks = render_md_chunks(text)
+    for i, chunk in enumerate(chunks):
+        kw = {"reply_markup": markup} if i == len(chunks) - 1 else {}
+        try:
+            await bot.send_message(chat_id, chunk, parse_mode="MarkdownV2", **kw)
+        except TelegramBadRequest:
+            await bot.send_message(chat_id, _strip_markdownv2(chunk)[:4096], **kw)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -73,7 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         markup = resume_keyboard(session_id)
         for chat_id in cfg.allowed_ids:
             with contextlib.suppress(Exception):
-                await bot.send_message(chat_id, text, reply_markup=markup)
+                await send_md(bot, chat_id, text, markup)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, bool]:
@@ -109,12 +128,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         chat_id = db.finish(command_id, body.ok, body.output, body.session_id)
         if chat_id is not None and app.state.bot is not None:
             head = f"✅ #{command_id}" if body.ok else f"❌ #{command_id}"
-            text = _clip(f"{head}\n\n{body.output}" if body.output else head)
+            text = f"{head}\n\n{body.output}" if body.output else head
             if body.session_id:
                 text += f"\n\n🧩 сессия {body.session_id}"
             with contextlib.suppress(Exception):
-                await app.state.bot.send_message(
-                    chat_id, text, reply_markup=resume_keyboard(body.session_id)
+                await send_md(
+                    app.state.bot, chat_id, text, resume_keyboard(body.session_id)
                 )
         return {"ok": chat_id is not None}
 

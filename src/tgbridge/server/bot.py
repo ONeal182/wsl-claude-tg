@@ -13,6 +13,7 @@ import asyncio
 import logging
 import time
 
+import telegramify_markdown
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
@@ -59,6 +60,39 @@ _PREVIEW = 60
 def bot_commands() -> list[BotCommand]:
     """Список для меню-кнопки бота в Telegram."""
     return [BotCommand(command=c, description=d) for c, d in COMMANDS]
+
+
+MD_CHUNK_LIMIT = 3900  # < 4096 (лимит Telegram), с запасом на служебные символы
+
+
+def render_md_chunks(text: str, limit: int = MD_CHUNK_LIMIT) -> list[str]:
+    """GFM-текст Claude -> список готовых MarkdownV2-кусков под лимит Telegram.
+
+    Пустой вход -> []. Режем по границам строк/блоков (код-фенсы не рвём).
+    Если конвертация упала — грубое экранирование обрезанного текста, лишь бы дошло.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    try:
+        plain, entities = telegramify_markdown.convert(text)
+        chunks = telegramify_markdown.split_markdownv2(plain, entities, max_utf16_len=limit)
+        chunks = [c for c in chunks if c.strip()]
+        if chunks:
+            return chunks
+    except Exception:  # noqa: BLE001 — форматирование не должно ронять доставку
+        log.warning("не удалось отрендерить MarkdownV2, шлю как есть", exc_info=True)
+    try:
+        return [telegramify_markdown.markdownify(text[:limit])]
+    except Exception:  # noqa: BLE001
+        return [_escape_markdownv2(text[:limit])]
+
+
+_MD_V2_SPECIAL = set(r"_*[]()~`>#+-=|{}.!") | {"\\"}
+
+
+def _escape_markdownv2(s: str) -> str:
+    return "".join("\\" + ch if ch in _MD_V2_SPECIAL else ch for ch in s)
 
 
 RESUME_CB_PREFIX = "resume:"

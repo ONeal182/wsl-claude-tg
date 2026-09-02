@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tgbridge.config import Settings
-from tgbridge.server.app import _clip, create_app
+from tgbridge.server.app import create_app
 
 TEST_TOKEN = "test-secret"  # совпадает с conftest.TEST_TOKEN
 AUTH = {"Authorization": f"Bearer {TEST_TOKEN}"}
@@ -26,18 +26,6 @@ def client(tmp_path):
     with TestClient(app) as c:
         c._app = app
         yield c
-
-
-# --- _clip ---------------------------------------------------------------
-
-
-def test_clip_short_unchanged():
-    assert _clip("abc") == "abc"
-
-
-def test_clip_truncates_marker():
-    out = _clip("x" * 5000)
-    assert out.endswith("…(обрезано)") and len(out) < 5000
 
 
 # --- эндпоинты ---------------------------------------------------------
@@ -72,8 +60,9 @@ def test_notify_with_session_id_attaches_resume_button(client):
         "/notify", json={"text": "задача завершена", "session_id": "sess-xyz"}, headers=AUTH
     )
     assert r.status_code == 200
-    kb = client._app.state.bot.send_message.await_args.kwargs["reply_markup"]
-    assert kb.inline_keyboard[0][0].callback_data == "resume:sess-xyz"
+    call = client._app.state.bot.send_message.await_args
+    assert call.kwargs.get("parse_mode") == "MarkdownV2"
+    assert call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "resume:sess-xyz"
 
 
 def test_notify_without_session_id_has_no_button(client):
@@ -133,6 +122,10 @@ def test_commands_next_carries_resume_from(client):
     assert r.json()["resume_from"] == "sess-abc"
 
 
+def _text_of(call):
+    return call.args[1] if len(call.args) > 1 else call.kwargs["text"]
+
+
 def test_result_notification_shows_session_id_and_button(client):
     db = client._app.state.db
     cid = db.enqueue(prompt="p", chat_id=42)
@@ -145,10 +138,30 @@ def test_result_notification_shows_session_id_and_button(client):
         headers=AUTH,
     )
     call = client._app.state.bot.send_message.await_args
-    sent_text = call.args[1] if len(call.args) > 1 else call.kwargs["text"]
-    assert "sess-abc" in sent_text
+    assert call.kwargs.get("parse_mode") == "MarkdownV2"
+    assert "sess" in _text_of(call) and "сессия" in _text_of(call)
     kb = call.kwargs["reply_markup"]
     assert kb.inline_keyboard[0][0].callback_data == "resume:sess-abc"
+
+
+def test_result_notification_splits_long_output_button_on_last(client):
+    db = client._app.state.db
+    cid = db.enqueue(prompt="p", chat_id=42)
+    client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    client._app.state.bot = AsyncMock()
+
+    big = "\n\n".join(f"Абзац {i} с текстом побольше для объёма." for i in range(400))
+    client.post(
+        f"/commands/{cid}/result",
+        json={"ok": True, "output": big, "session_id": "sess-abc"},
+        headers=AUTH,
+    )
+    calls = client._app.state.bot.send_message.await_args_list
+    assert len(calls) > 1
+    # кнопка — только под последним сообщением
+    assert all(c.kwargs.get("reply_markup") is None for c in calls[:-1])
+    assert calls[-1].kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "resume:sess-abc"
+    assert all(len(_text_of(c)) <= 4096 for c in calls)
 
 
 def test_result_notification_no_button_without_session_id(client):

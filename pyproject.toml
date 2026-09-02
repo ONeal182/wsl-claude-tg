@@ -15,6 +15,7 @@ dependencies = [
 server = [
     "aiogram>=3.10",
     "fastapi>=0.115",
+    "telegramify-markdown>=0.5",
     "uvicorn[standard]>=0.30",
 ]
 # Ставится только в WSL (агенту хватает httpx из основных зависимостей)

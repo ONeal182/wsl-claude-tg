@@ -15,6 +15,7 @@ from tgbridge.server.bot import (
     id_reply,
     new_session_reply,
     prompt_reply,
+    render_md_chunks,
     resume_keyboard,
     resume_reply,
     run_bot,
@@ -120,6 +121,37 @@ def test_sessions_reply_empty(db: DB):
 
 def test_sessions_reply_rejects_stranger(db: DB):
     assert "не в allowlist" in sessions_reply(111, ALLOWED, db)
+
+
+def test_render_md_chunks_empty_input():
+    assert render_md_chunks("") == []
+    assert render_md_chunks("   \n  ") == []
+
+
+def test_render_md_chunks_plain_text_one_chunk():
+    chunks = render_md_chunks("просто короткий ответ")
+    assert len(chunks) == 1 and "просто короткий ответ" in chunks[0]
+
+
+def test_render_md_chunks_converts_bold_to_markdownv2():
+    # GFM **bold** -> MarkdownV2 *bold*, а точка экранируется
+    out = render_md_chunks("это **жирный** текст.")[0]
+    assert "*жирный*" in out and "\\." in out
+
+
+def test_render_md_chunks_keeps_code_fence_intact():
+    out = render_md_chunks("вот код:\n\n```py\nx = 1\n```\n")[0]
+    assert "```py\nx = 1\n```" in out
+
+
+def test_render_md_chunks_splits_long_text_under_limit():
+    raw = "\n\n".join(f"Абзац номер {i} с каким-то содержимым." for i in range(300))
+    chunks = render_md_chunks(raw, limit=600)
+    assert len(chunks) > 1
+    assert all(len(c) <= 600 for c in chunks)
+    # ничего не потеряли: первый и последний абзацы на месте
+    assert "Абзац номер 0 " in chunks[0]
+    assert "Абзац номер 299 " in chunks[-1]
 
 
 def test_resume_keyboard_carries_session_callback():
