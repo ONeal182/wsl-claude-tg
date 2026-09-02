@@ -1,0 +1,48 @@
+[project]
+name = "tgbridge"
+version = "0.1.0"
+description = "WSL <-> VPS <-> Telegram bridge: notifications out, prompts in"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.optional-dependencies]
+# Ставится только на VPS: pip/uv sync --extra server
+server = [
+    "aiogram>=3.10",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+# Ставится только в WSL (агенту хватает httpx из основных зависимостей)
+agent = []
+dev = [
+    "ruff>=0.6",
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+tgbridge-server = "tgbridge.server.app:main"
+tgbridge-agent = "tgbridge.agent.main:main"
+tgnotify = "tgbridge.cli.notify:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tgbridge"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
