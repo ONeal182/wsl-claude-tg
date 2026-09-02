@@ -10,6 +10,9 @@ Wants=network-online.target tgbridge-tunnel.service
 [Service]
 Type=simple
 WorkingDirectory=%h/tgbridge
+# systemd --user даёт урезанный PATH — добавляем ~/.local/bin (там claude, node, pnpm)
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=%h/tgbridge/.env
 ExecStart=%h/tgbridge/.venv/bin/tgbridge-agent
 Restart=always
