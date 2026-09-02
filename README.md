@@ -33,6 +33,20 @@ uv run tgnotify "проверка"           # WSL
 
 Автозапуск — юниты в `deploy/` (см. комментарии внутри файлов).
 
+## Синхронность кода и документации
+
+`deploy/hooks/docs-reminder.sh` — Stop-хук Claude Code. Если в рабочем дереве
+менялся код, а `*.md` — нет, хук один раз просит обновить CLAUDE.md / README
+перед завершением ответа (защита от цикла — по флагу `stop_hook_active`).
+
+Подключение (в `~/.claude/settings.json`, в массив `hooks.Stop`):
+
+```json
+{ "hooks": [ { "type": "command", "command": "~/.claude/hooks/docs-reminder.sh", "timeout": 15 } ] }
+```
+
+Активен, только когда в корне git-репозитория есть `CLAUDE.md`.
+
 ## HTTP API (VPS)
 
 Все ручки, кроме `/healthz`, требуют `Authorization: Bearer $TGBRIDGE_TOKEN`.
