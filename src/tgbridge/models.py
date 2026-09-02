@@ -30,3 +30,4 @@ class ResultIn(BaseModel):
 
     ok: bool
     output: str = Field(default="", max_length=100_000)
+    session_id: str = ""  # id сессии Claude из `--output-format json`, "" если не распознан

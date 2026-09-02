@@ -157,6 +157,56 @@ def test_history_respects_limit(db: DB):
     assert len(db.history(limit=3)) == 3
 
 
+def test_record_session_first_time_sets_title_from_prompt(db: DB):
+    db.record_session("sess-1", prompt="почини парсер даты", result="готово")
+    row = db.sessions()[0]
+    assert row["session_id"] == "sess-1"
+    assert row["title"] == "почини парсер даты"
+    assert row["last_result"] == "готово"
+    assert row["turns"] == 1
+
+
+def test_record_session_updates_keep_title_bump_turns(db: DB):
+    db.record_session("sess-1", prompt="первый промпт", result="r1")
+    db.record_session("sess-1", prompt="второй промпт", result="r2")
+    row = db.sessions()[0]
+    assert row["title"] == "первый промпт"
+    assert row["last_result"] == "r2"
+    assert row["turns"] == 2
+
+
+def test_sessions_newest_first(db: DB):
+    db.record_session("old", prompt="a", result="")
+    db._conn.execute("UPDATE sessions SET updated_at = 1 WHERE session_id = 'old'")
+    db.record_session("new", prompt="b", result="")
+    assert [r["session_id"] for r in db.sessions()] == ["new", "old"]
+
+
+def test_sessions_respects_limit(db: DB):
+    for i in range(4):
+        db.record_session(f"s{i}", prompt="p", result="")
+    assert len(db.sessions(limit=2)) == 2
+
+
+def test_finish_records_session_when_id_present(db: DB):
+    cid = db.enqueue("собери отчёт", 1)
+    db.lease_next()
+    db.finish(cid, ok=True, output="отчёт собран", session_id="sess-xyz")
+    row = db.sessions()[0]
+    assert (row["session_id"], row["title"], row["last_result"]) == (
+        "sess-xyz",
+        "собери отчёт",
+        "отчёт собран",
+    )
+
+
+def test_finish_without_session_id_records_nothing(db: DB):
+    cid = db.enqueue("p", 1)
+    db.lease_next()
+    db.finish(cid, ok=True, output="out")
+    assert db.sessions() == []
+
+
 def test_log_notification_persists(db: DB):
     db.log_notification("hello", "warn")
     row = db._conn.execute("SELECT text, level FROM notifications").fetchone()

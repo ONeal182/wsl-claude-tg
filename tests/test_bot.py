@@ -17,6 +17,7 @@ from tgbridge.server.bot import (
     prompt_reply,
     resume_reply,
     run_bot,
+    sessions_reply,
 )
 
 ALLOWED = {466404679}
@@ -105,13 +106,28 @@ def test_history_reply_empty(db: DB):
     assert "пуст" in history_reply(466404679, ALLOWED, db).lower()
 
 
+def test_sessions_reply_lists_id_and_title(db: DB):
+    db.record_session("b463918f-9e3d-4228-a202-5c6f7c0d6264", prompt="почини парсер", result="ок")
+    out = sessions_reply(466404679, ALLOWED, db)
+    assert "b463918f-9e3d-4228-a202-5c6f7c0d6264" in out
+    assert "почини парсер" in out
+
+
+def test_sessions_reply_empty(db: DB):
+    assert "нет" in sessions_reply(466404679, ALLOWED, db).lower()
+
+
+def test_sessions_reply_rejects_stranger(db: DB):
+    assert "не в allowlist" in sessions_reply(111, ALLOWED, db)
+
+
 def test_history_reply_rejects_stranger(db: DB):
     assert "не в allowlist" in history_reply(111, ALLOWED, db)
 
 
 def test_bot_commands_cover_every_handler():
     names = {c.command for c in bot_commands()}
-    assert {"start", "new", "clear", "resume", "history", "id", "ping"} <= names
+    assert {"start", "new", "clear", "resume", "sessions", "history", "id", "ping"} <= names
     assert all(c.description for c in bot_commands())
 
 
@@ -223,3 +239,10 @@ async def test_dispatcher_resume_without_arg_shows_usage(bot, db: DB, answers):
     dp = build_dispatcher(ALLOWED)
     await dp.feed_raw_update(bot, _raw("/resume", 466404679), db=db, wake=asyncio.Event())
     assert answers and "/resume" in answers[0]
+
+
+async def test_dispatcher_sessions_lists(bot, db: DB, answers):
+    db.record_session("sess-777", prompt="сделай отчёт", result="готово")
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(bot, _raw("/sessions", 466404679), db=db, wake=asyncio.Event())
+    assert answers and "sess-777" in answers[0] and "сделай отчёт" in answers[0]

@@ -104,7 +104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/commands/{command_id}/result", dependencies=[auth])
     async def commands_result(command_id: int, body: ResultIn) -> dict[str, bool]:
         db: DB = app.state.db
-        chat_id = db.finish(command_id, body.ok, body.output)
+        chat_id = db.finish(command_id, body.ok, body.output, body.session_id)
         if chat_id is not None and app.state.bot is not None:
             head = f"✅ #{command_id}" if body.ok else f"❌ #{command_id}"
             text = _clip(f"{head}\n\n{body.output}" if body.output else head)

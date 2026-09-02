@@ -26,6 +26,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("new", "новая сессия — забыть контекст"),
     ("clear", "то же, что /new"),
     ("resume", "продолжить сессию Claude по id (форк)"),
+    ("sessions", "сохранённые сессии Claude"),
     ("history", "последние задачи"),
     ("id", "показать твой Telegram id"),
     ("ping", "проверка связи"),
@@ -38,12 +39,14 @@ START_TEXT = (
     "Каждый следующий промпт продолжает тот же разговор.\n"
     "/clear, /new — начать новую сессию (забыть контекст)\n"
     "/resume <id> — продолжить конкретную сессию Claude (в новой ветке)\n"
+    "/sessions — сохранённые сессии Claude (id для /resume)\n"
     "/history — последние задачи\n"
     "/id — показать твой Telegram id\n"
     "/ping — проверка"
 )
 
 HISTORY_LIMIT = 15
+SESSIONS_LIMIT = 15
 _PREVIEW = 60
 
 
@@ -82,6 +85,26 @@ def resume_reply(user_id: int, allowed_ids: set[int], db: DB, session_id: str) -
 def _clip_preview(text: str) -> str:
     one_line = " ".join(text.split())
     return one_line if len(one_line) <= _PREVIEW else one_line[:_PREVIEW] + "…"
+
+
+def sessions_reply(
+    user_id: int, allowed_ids: set[int], db: DB, limit: int = SESSIONS_LIMIT
+) -> str:
+    """Список сессий Claude, прошедших через мост, — id можно скопировать в /resume."""
+    if user_id not in allowed_ids:
+        return "не в allowlist, игнорирую"
+    rows = db.sessions(limit)
+    if not rows:
+        return "нет сохранённых сессий"
+    lines: list[str] = []
+    for r in rows:
+        when = time.strftime("%d.%m %H:%M", time.localtime(r["updated_at"]))
+        lines.append(f"`{r['session_id']}` · {r['turns']} реплик · {when}")
+        if r["title"]:
+            lines.append(f"  {_clip_preview(r['title'])}")
+        if r["last_result"]:
+            lines.append(f"  ← {_clip_preview(r['last_result'])}")
+    return "\n".join(lines)
 
 
 def _status_mark(status: str, ok: int | None) -> str:
@@ -145,6 +168,11 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
         await msg.answer(
             resume_reply(uid, allowed_ids, db, command.args or ""), parse_mode="Markdown"
         )
+
+    @dp.message(Command("sessions"))
+    async def on_sessions(msg: Message, db: DB) -> None:
+        uid = msg.from_user.id if msg.from_user else 0
+        await msg.answer(sessions_reply(uid, allowed_ids, db), parse_mode="Markdown")
 
     @dp.message(Command("history"))
     async def on_history(msg: Message, db: DB) -> None:

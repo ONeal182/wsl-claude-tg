@@ -53,7 +53,19 @@ CREATE TABLE IF NOT EXISTS session_state (
     resume_id     TEXT    NOT NULL DEFAULT ''
 );
 INSERT OR IGNORE INTO session_state (id, reset_pending) VALUES (1, 1);
+
+-- журнал сессий Claude, отработавших через мост: id для /resume + что это было.
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id  TEXT    PRIMARY KEY,
+    title       TEXT    NOT NULL DEFAULT '',
+    last_result TEXT    NOT NULL DEFAULT '',
+    turns       INTEGER NOT NULL DEFAULT 0,
+    created_at  REAL    NOT NULL,
+    updated_at  REAL    NOT NULL
+);
 """
+
+_TITLE_MAX = 80
 
 
 class DB:
@@ -159,10 +171,12 @@ class DB:
             resume_from=row["resume_from"],
         )
 
-    def finish(self, command_id: int, ok: bool, output: str) -> int | None:
+    def finish(
+        self, command_id: int, ok: bool, output: str, session_id: str = ""
+    ) -> int | None:
         """Записать результат. Вернуть chat_id для ответа в Telegram или None."""
         row = self._conn.execute(
-            "SELECT chat_id FROM commands WHERE id=? AND status='leased'",
+            "SELECT chat_id, prompt FROM commands WHERE id=? AND status='leased'",
             (command_id,),
         ).fetchone()
         if row is None:
@@ -171,8 +185,36 @@ class DB:
             "UPDATE commands SET status='done', ok=?, output=?, done_at=? WHERE id=?",
             (1 if ok else 0, output, time.time(), command_id),
         )
+        if session_id:
+            self.record_session(session_id, prompt=row["prompt"], result=output)
         self._conn.commit()
         return int(row["chat_id"])
+
+    # --- журнал сессий Claude --------------------------------------------
+
+    def record_session(self, session_id: str, prompt: str, result: str) -> None:
+        """Заапсертить сессию: title от первого промпта, потом только turns/last_result."""
+        now = time.time()
+        self._conn.execute(
+            "INSERT INTO sessions (session_id, title, last_result, turns, created_at, updated_at) "
+            "VALUES (?, ?, ?, 1, ?, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET "
+            "  last_result = excluded.last_result, "
+            "  turns = sessions.turns + 1, "
+            "  updated_at = excluded.updated_at",
+            (session_id, prompt[:_TITLE_MAX], result, now, now),
+        )
+        self._conn.commit()
+
+    def sessions(self, limit: int = 15) -> list[sqlite3.Row]:
+        """Сессии Claude, недавние сверху."""
+        return list(
+            self._conn.execute(
+                "SELECT session_id, title, last_result, turns, created_at, updated_at "
+                "FROM sessions ORDER BY updated_at DESC LIMIT ?",
+                (max(1, limit),),
+            )
+        )
 
     # --- уведомления -----------------------------------------------------
 

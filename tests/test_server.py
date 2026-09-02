@@ -115,6 +115,20 @@ def test_commands_next_carries_resume_from(client):
     assert r.json()["resume_from"] == "sess-abc"
 
 
+def test_result_with_session_id_populates_sessions_table(client):
+    db = client._app.state.db
+    cid = db.enqueue(prompt="собери отчёт", chat_id=1)
+    client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    r = client.post(
+        f"/commands/{cid}/result",
+        json={"ok": True, "output": "готово", "session_id": "sess-abc"},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    rows = db.sessions()
+    assert (rows[0]["session_id"], rows[0]["title"]) == ("sess-abc", "собери отчёт")
+
+
 def test_result_unknown_id_ok_false(client):
     r = client.post("/commands/123/result", json={"ok": True, "output": "x"}, headers=AUTH)
     assert r.status_code == 200 and r.json() == {"ok": False}

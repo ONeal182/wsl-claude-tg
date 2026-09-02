@@ -17,7 +17,7 @@ GET {server_url}/commands/next?timeout=25
 
 ## Особенности
 
-- **`run_prompt(cfg, prompt, fresh, resume_from)`**: собирает argv — `resume_from` → `--resume <id> --fork-session` (перевешивает `fresh`), иначе `fresh` → чистый `claude -p`, иначе `--continue`; затем `asyncio.create_subprocess_exec(*argv, cwd=cfg.workdir)`, stderr слит в stdout, общий таймаут `cfg.prompt_timeout` → при превышении `proc.kill()`. `FileNotFoundError` (нет бинаря `claude`) отдаётся как обычный неуспешный результат, не роняет цикл. Оба флага приходят из `CommandOut` — решение принимает VPS, не агент.
+- **`run_prompt(cfg, prompt, fresh, resume_from) -> (ok, вывод, session_id)`**: argv всегда `claude -p --output-format json`, дальше `resume_from` → `--resume <id> --fork-session` (перевешивает `fresh`), иначе `fresh` → ничего, иначе `--continue`; затем `asyncio.create_subprocess_exec(*argv, cwd=cfg.workdir)` (stdout/stderr раздельно), общий таймаут `cfg.prompt_timeout` → при превышении `proc.kill()`. `_parse_output()`: json → `.result`/`.session_id`/`.is_error`; не-json (краш до печати конверта) → сырой `stdout+stderr`, `session_id=""`. `FileNotFoundError` (нет бинаря `claude`) — обычный неуспешный результат, не роняет цикл. Оба флага приходят из `CommandOut` — решение принимает VPS, не агент.
 - **Промпт не парсится и не экранируется** — уходит в `claude` одним argv-элементом (не через shell). Расширяя поведение, не собирай команду строкой.
 - Результат режется по `MAX_OUTPUT` здесь и ещё раз на сервере — не полагайся на один слой.
 - Backoff сбрасывается в 1 после любого успешного ответа (в т.ч. `204`).

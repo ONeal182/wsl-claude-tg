@@ -27,7 +27,12 @@ def test_notify_rejects_bad_level():
 
 def test_result_defaults_empty_output():
     r = ResultIn(ok=True)
-    assert r.output == ""
+    assert r.output == "" and r.session_id == ""
+
+
+def test_result_carries_session_id():
+    r = ResultIn(ok=True, output="done", session_id="b463918f-9e3d")
+    assert r.model_dump()["session_id"] == "b463918f-9e3d"
 
 
 def test_command_out_defaults():

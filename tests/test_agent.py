@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock
 
 import httpx
@@ -10,14 +11,22 @@ from tgbridge.agent import main
 from tgbridge.models import CommandOut
 
 
+def _envelope(result: str = "", session_id: str = "s-1", is_error: bool = False) -> bytes:
+    """Как `claude -p --output-format json` печатает итог."""
+    return json.dumps(
+        {"result": result, "session_id": session_id, "is_error": is_error}
+    ).encode()
+
+
 class FakeProc:
-    def __init__(self, out=b"", rc=0):
+    def __init__(self, out=b"", rc=0, err=b""):
         self._out = out
+        self._err = err
         self.returncode = rc
         self.killed = False
 
     async def communicate(self):
-        return self._out, b""
+        return self._out, self._err
 
     def kill(self):
         self.killed = True
@@ -47,25 +56,37 @@ def _capture_argv(monkeypatch, proc):
 # --- run_prompt --------------------------------------------------------
 
 
-async def test_run_prompt_success(settings, monkeypatch):
-    _patch_exec(monkeypatch, FakeProc(b"hello", 0))
-    assert await main.run_prompt(settings, "hi") == (True, "hello")
+async def test_run_prompt_parses_result_and_session_id(settings, monkeypatch):
+    _patch_exec(monkeypatch, FakeProc(_envelope("hello", "sess-42"), 0))
+    assert await main.run_prompt(settings, "hi") == (True, "hello", "sess-42")
+
+
+async def test_run_prompt_json_is_error_is_failure(settings, monkeypatch):
+    _patch_exec(monkeypatch, FakeProc(_envelope("boom", "sess-1", is_error=True), 0))
+    ok, out, sid = await main.run_prompt(settings, "hi")
+    assert ok is False and out == "boom" and sid == "sess-1"
 
 
 async def test_run_prompt_nonzero_rc(settings, monkeypatch):
-    _patch_exec(monkeypatch, FakeProc(b"boom", 2))
-    ok, out = await main.run_prompt(settings, "hi")
+    _patch_exec(monkeypatch, FakeProc(_envelope("boom", "s"), 2))
+    ok, out, _ = await main.run_prompt(settings, "hi")
     assert ok is False and out == "boom"
 
 
+async def test_run_prompt_non_json_falls_back_to_raw(settings, monkeypatch):
+    _patch_exec(monkeypatch, FakeProc(b"segfault", 1, err=b"stack trace"))
+    ok, out, sid = await main.run_prompt(settings, "hi")
+    assert ok is False and "segfault" in out and sid == ""
+
+
 async def test_run_prompt_empty_output(settings, monkeypatch):
-    _patch_exec(monkeypatch, FakeProc(b"   ", 0))
-    assert await main.run_prompt(settings, "hi") == (True, "(пустой вывод)")
+    _patch_exec(monkeypatch, FakeProc(_envelope("   ", "s"), 0))
+    assert await main.run_prompt(settings, "hi") == (True, "(пустой вывод)", "s")
 
 
 async def test_run_prompt_truncates(settings, monkeypatch):
-    _patch_exec(monkeypatch, FakeProc(b"x" * 9000, 0))
-    ok, out = await main.run_prompt(settings, "hi")
+    _patch_exec(monkeypatch, FakeProc(_envelope("x" * 9000, "s"), 0))
+    ok, out, _ = await main.run_prompt(settings, "hi")
     assert ok is True and len(out) == main.MAX_OUTPUT
 
 
@@ -74,26 +95,33 @@ async def test_run_prompt_binary_missing(settings, monkeypatch):
         raise FileNotFoundError
 
     monkeypatch.setattr(main.asyncio, "create_subprocess_exec", _boom)
-    ok, out = await main.run_prompt(settings, "hi")
-    assert ok is False and "не найден бинарь claude" in out
+    ok, out, sid = await main.run_prompt(settings, "hi")
+    assert ok is False and "не найден бинарь claude" in out and sid == ""
+
+
+async def test_run_prompt_asks_for_json_output(settings, monkeypatch):
+    argv = _capture_argv(monkeypatch, FakeProc(_envelope("ok", "s"), 0))
+    await main.run_prompt(settings, "hi")
+    assert argv[argv.index("--output-format") + 1] == "json"
+    assert argv[-1] == "hi"
 
 
 async def test_run_prompt_fresh_starts_new_session(settings, monkeypatch):
-    argv = _capture_argv(monkeypatch, FakeProc(b"ok", 0))
+    argv = _capture_argv(monkeypatch, FakeProc(_envelope("ok", "s"), 0))
     await main.run_prompt(settings, "hi", fresh=True)
     assert "--continue" not in argv and "-c" not in argv
     assert argv[-1] == "hi"
 
 
 async def test_run_prompt_not_fresh_continues_session(settings, monkeypatch):
-    argv = _capture_argv(monkeypatch, FakeProc(b"ok", 0))
+    argv = _capture_argv(monkeypatch, FakeProc(_envelope("ok", "s"), 0))
     await main.run_prompt(settings, "hi", fresh=False)
     assert "--continue" in argv
     assert argv[-1] == "hi"
 
 
 async def test_run_prompt_resume_forks_session(settings, monkeypatch):
-    argv = _capture_argv(monkeypatch, FakeProc(b"ok", 0))
+    argv = _capture_argv(monkeypatch, FakeProc(_envelope("ok", "s"), 0))
     await main.run_prompt(settings, "hi", resume_from="sess-abc")
     assert argv[argv.index("--resume") + 1] == "sess-abc"
     assert "--fork-session" in argv and "--continue" not in argv
@@ -101,7 +129,7 @@ async def test_run_prompt_resume_forks_session(settings, monkeypatch):
 
 
 async def test_run_prompt_resume_beats_fresh(settings, monkeypatch):
-    argv = _capture_argv(monkeypatch, FakeProc(b"ok", 0))
+    argv = _capture_argv(monkeypatch, FakeProc(_envelope("ok", "s"), 0))
     await main.run_prompt(settings, "hi", fresh=True, resume_from="sess-abc")
     assert "--resume" in argv and "--fork-session" in argv
 
@@ -115,25 +143,26 @@ async def test_run_prompt_timeout_kills(settings, monkeypatch):
         raise TimeoutError
 
     monkeypatch.setattr(main.asyncio, "wait_for", _timeout)
-    ok, out = await main.run_prompt(settings, "hi")
-    assert ok is False and out.startswith("таймаут") and proc.killed
+    ok, out, sid = await main.run_prompt(settings, "hi")
+    assert ok is False and out.startswith("таймаут") and proc.killed and sid == ""
 
 
 # --- handle ----------------------------------------------------------
 
 
 async def test_handle_posts_result(settings, monkeypatch):
-    monkeypatch.setattr(main, "run_prompt", AsyncMock(return_value=(True, "out")))
+    monkeypatch.setattr(main, "run_prompt", AsyncMock(return_value=(True, "out", "sess-9")))
     client = AsyncMock()
     client.post.return_value.raise_for_status = lambda: None
     await main.handle(client, settings, CommandOut(id=7, prompt="p", chat_id=1))
     client.post.assert_awaited_once()
     url, kw = client.post.await_args.args[0], client.post.await_args.kwargs
     assert url == "/commands/7/result" and kw["json"]["ok"] is True
+    assert kw["json"]["session_id"] == "sess-9"
 
 
 async def test_handle_forwards_session_flags_to_run_prompt(settings, monkeypatch):
-    rp = AsyncMock(return_value=(True, "out"))
+    rp = AsyncMock(return_value=(True, "out", ""))
     monkeypatch.setattr(main, "run_prompt", rp)
     client = AsyncMock()
     client.post.return_value.raise_for_status = lambda: None
@@ -144,7 +173,7 @@ async def test_handle_forwards_session_flags_to_run_prompt(settings, monkeypatch
 
 
 async def test_handle_retries_then_succeeds(settings, monkeypatch):
-    monkeypatch.setattr(main, "run_prompt", AsyncMock(return_value=(True, "out")))
+    monkeypatch.setattr(main, "run_prompt", AsyncMock(return_value=(True, "out", "")))
     monkeypatch.setattr(main.asyncio, "sleep", AsyncMock())
     ok_resp = AsyncMock()
     ok_resp.raise_for_status = lambda: None
@@ -155,7 +184,7 @@ async def test_handle_retries_then_succeeds(settings, monkeypatch):
 
 
 async def test_handle_gives_up_after_5(settings, monkeypatch, caplog):
-    monkeypatch.setattr(main, "run_prompt", AsyncMock(return_value=(False, "err")))
+    monkeypatch.setattr(main, "run_prompt", AsyncMock(return_value=(False, "err", "")))
     monkeypatch.setattr(main.asyncio, "sleep", AsyncMock())
     client = AsyncMock()
     client.post.side_effect = httpx.ConnectError("down")
