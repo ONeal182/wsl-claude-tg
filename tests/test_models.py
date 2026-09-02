@@ -25,6 +25,15 @@ def test_notify_rejects_bad_level():
         NotifyIn(text="hi", level="debug")
 
 
+def test_notify_defaults_empty_session_id():
+    assert NotifyIn(text="hi").session_id == ""
+
+
+def test_notify_carries_session_id():
+    n = NotifyIn(text="hi", session_id="b463918f-9e3d")
+    assert n.model_dump()["session_id"] == "b463918f-9e3d"
+
+
 def test_result_defaults_empty_output():
     r = ResultIn(ok=True)
     assert r.output == "" and r.session_id == ""

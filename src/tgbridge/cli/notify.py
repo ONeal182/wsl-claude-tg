@@ -20,6 +20,12 @@ def main() -> int:
     p = argparse.ArgumentParser(prog="tgnotify", description="отправить уведомление в Telegram")
     p.add_argument("text", help="текст сообщения, или '-' чтобы прочитать stdin")
     p.add_argument("-l", "--level", choices=["info", "warn", "error"], default="info")
+    p.add_argument(
+        "--session",
+        default="",
+        metavar="ID",
+        help="id сессии Claude — прицепить кнопку «Перейти к сессии»",
+    )
     args = p.parse_args()
 
     text = sys.stdin.read().strip() if args.text == "-" else args.text
@@ -27,12 +33,16 @@ def main() -> int:
         print("tgnotify: пустой текст", file=sys.stderr)
         return 2
 
+    body = {"text": text[:4000], "level": args.level}
+    if args.session:
+        body["session_id"] = args.session
+
     cfg = load()
     try:
         r = httpx.post(
             f"{cfg.server_url}/notify",
             headers={"Authorization": f"Bearer {cfg.token}"},
-            json={"text": text[:4000], "level": args.level},
+            json=body,
             timeout=10,
         )
         r.raise_for_status()

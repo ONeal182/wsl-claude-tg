@@ -73,6 +73,28 @@ systemctl --user status tgbridge-tunnel tgbridge-agent
 curl -s http://127.0.0.1:8090/healthz     # {"ok":true} — значит туннель жив
 ```
 
+### Stop-хук: результат интерактивной сессии в Telegram (опционально)
+
+`deploy/session-notify.sh` по завершении ответа Claude Code в `TGBRIDGE_WORKDIR`
+шлёт последний ответ ассистента через `tgnotify --session <id>` — в Telegram
+приходит результат с кнопкой «▶️ Перейти к сессии». Ставится вручную:
+
+```bash
+mkdir -p ~/.claude/hooks
+cp ~/tgbridge/deploy/session-notify.sh ~/.claude/hooks/session-notify.sh
+chmod +x ~/.claude/hooks/session-notify.sh
+```
+
+Затем в `~/.claude/settings.json` в массив `hooks.Stop` добавить блок:
+
+```json
+{ "hooks": [ { "type": "command", "command": "~/.claude/hooks/session-notify.sh", "timeout": 20 } ] }
+```
+
+Хук читает `TGBRIDGE_WORKDIR` из окружения; если Claude Code запускается не через
+systemd-юнит с `EnvironmentFile`, экспортни переменную в шелл-профиле или
+поправь дефолт (`$HOME/tgbridge`) в самом скрипте.
+
 ---
 
 ## 3. Проверка сквозняка
@@ -80,6 +102,8 @@ curl -s http://127.0.0.1:8090/healthz     # {"ok":true} — значит тун�
 Отправь боту любой текст → должно прийти `⏳ принято, задача #N`, затем `✅ #N` с ответом.
 
 `tgnotify "тест"` из WSL → сообщение в Telegram.
+`tgnotify --session test-id "тест"` → сообщение с кнопкой «▶️ Перейти к сессии»
+(сама кнопка сработает, только если сессия `test-id` реально лежит в `TGBRIDGE_WORKDIR`).
 
 ---
 

@@ -66,6 +66,22 @@ def test_notify_rejects_bad_body(client):
     assert client.post("/notify", json={"text": ""}, headers=AUTH).status_code == 422
 
 
+def test_notify_with_session_id_attaches_resume_button(client):
+    client._app.state.bot = AsyncMock()
+    r = client.post(
+        "/notify", json={"text": "задача завершена", "session_id": "sess-xyz"}, headers=AUTH
+    )
+    assert r.status_code == 200
+    kb = client._app.state.bot.send_message.await_args.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].callback_data == "resume:sess-xyz"
+
+
+def test_notify_without_session_id_has_no_button(client):
+    client._app.state.bot = AsyncMock()
+    client.post("/notify", json={"text": "просто уведомление"}, headers=AUTH)
+    assert client._app.state.bot.send_message.await_args.kwargs.get("reply_markup") is None
+
+
 def test_commands_next_empty_204(client):
     assert client.get("/commands/next", params={"timeout": 1}, headers=AUTH).status_code == 204
 

@@ -2,7 +2,8 @@
 
 Эндпоинты (все, кроме /healthz, требуют Authorization: Bearer <TGBRIDGE_TOKEN>):
     GET  /healthz                  — проверка живости, без авторизации
-    POST /notify                   — {text, level} -> сообщение во все чаты allowlist
+    POST /notify                   — {text, level, session_id?} -> сообщение во все чаты allowlist
+                                     (session_id -> кнопка «Перейти к сессии»)
     GET  /commands/next?timeout=25 — long-poll: 200 с задачей или 204, если пусто
     POST /commands/{id}/result     — {ok, output} -> ответ в Telegram, задача закрыта
 """
@@ -66,12 +67,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="tgbridge", version="0.1.0", lifespan=lifespan)
     auth = Depends(make_auth_dep(cfg.token))
 
-    async def notify_chats(bot: Bot | None, text: str) -> None:
+    async def notify_chats(bot: Bot | None, text: str, session_id: str = "") -> None:
         if bot is None:
             return
+        markup = resume_keyboard(session_id)
         for chat_id in cfg.allowed_ids:
             with contextlib.suppress(Exception):
-                await bot.send_message(chat_id, text)
+                await bot.send_message(chat_id, text, reply_markup=markup)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, bool]:
@@ -82,7 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db: DB = app.state.db
         db.log_notification(body.text, body.level)
         mark = {"info": "ℹ️", "warn": "⚠️", "error": "🔴"}[body.level]
-        await notify_chats(app.state.bot, f"{mark} {body.text}")
+        await notify_chats(app.state.bot, f"{mark} {body.text}", body.session_id)
         return {"ok": True}
 
     @app.get("/commands/next", dependencies=[auth])

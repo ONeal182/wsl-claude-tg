@@ -12,6 +12,9 @@ Level = Literal["info", "warn", "error"]
 class NotifyIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     level: Level = "info"
+    # непусто -> к сообщению цепляется кнопка «▶️ Перейти к сессии» (= /resume <id>).
+    # Заполняет Stop-хук интерактивной сессии Claude в WSL.
+    session_id: str = ""
 
 
 class CommandOut(BaseModel):

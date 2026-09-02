@@ -44,6 +44,16 @@ def test_level_flag(monkeypatch, captured_post):
     assert captured_post[0]["json"]["level"] == "error"
 
 
+def test_session_flag_adds_session_id(monkeypatch, captured_post):
+    assert _run(monkeypatch, ["--session", "sess-abc", "готово"]) == 0
+    assert captured_post[0]["json"]["session_id"] == "sess-abc"
+
+
+def test_no_session_flag_omits_session_id(monkeypatch, captured_post):
+    assert _run(monkeypatch, ["готово"]) == 0
+    assert "session_id" not in captured_post[0]["json"]
+
+
 def test_reads_stdin_on_dash(monkeypatch, captured_post):
     assert _run(monkeypatch, ["-"], stdin="из пайпа\n") == 0
     assert captured_post[0]["json"]["text"] == "из пайпа"

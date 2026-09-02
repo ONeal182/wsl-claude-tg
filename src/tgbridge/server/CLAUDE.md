@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Особенности
 
 - **`/commands/next`** — long-poll руками: крутит `db.lease_next()`, между попытками ждёт `wake` с потолком 5 c, весь цикл ограничен `timeout` (клампится в 1..60). Бот вызывает `wake.set()` при новой задаче → агент получает её почти мгновенно.
-- **`/notify`** шлёт во **все** `cfg.allowed_ids`, ошибки отправки глушатся (`contextlib.suppress`).
+- **`/notify`** шлёт во **все** `cfg.allowed_ids`, ошибки отправки глушатся (`contextlib.suppress`). При непустом `NotifyIn.session_id` к сообщению цепляется `resume_keyboard(session_id)` (та же кнопка «▶️ Перейти к сессии», что под результатом задачи). Заполняется Stop-хуком `session-notify.sh` в WSL.
 - Бот получает `db` и `wake` не импортом, а как kwargs `start_polling(bot, db=..., wake=...)`; в хендлерах они — обычные параметры (DI aiogram).
 - Логика ответов бота — чистые функции `*_reply()` в `bot.py` (`id`, `prompt`, `new_session`, `resume`, `sessions`, `history`); хендлеры aiogram только вызывают их и `msg.answer()`. Тесты бьют по чистым функциям + пара smoke-тестов через `dp.feed_raw_update` с перехватом `Message.answer`.
 - `/clear` и `/new` — синонимы: `db.request_new_session()` взводит `reset_pending`, следующий `enqueue()` отдаёт задачу с `fresh=1`. `/resume <id>` → `db.request_resume(id)`: следующая задача уедет с `resume_from=id`, агент сделает `--resume <id> --fork-session`. `/clear`/`/new` сбрасывают и `resume_id`, и наоборот — флаги взаимоисключающие. Команды промпт в очередь **не** кладут. `/history` рендерит `db.history()`, `/sessions` — `db.sessions()` (id для `/resume` + title/last_result; превью 60 символов).
