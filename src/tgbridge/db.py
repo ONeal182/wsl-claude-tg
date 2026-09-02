@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS commands (
     status     TEXT    NOT NULL DEFAULT 'queued',
     output     TEXT    NOT NULL DEFAULT '',
     ok         INTEGER,
+    fresh      INTEGER NOT NULL DEFAULT 0,
     created_at REAL    NOT NULL,
     leased_at  REAL,
     done_at    REAL
@@ -42,6 +43,14 @@ CREATE TABLE IF NOT EXISTS notifications (
     level      TEXT    NOT NULL,
     created_at REAL    NOT NULL
 );
+
+-- одна строка: ждёт ли следующий промпт старта новой сессии Claude.
+-- Стартовое значение 1 -> самый первый промпт в базе идёт с чистого листа.
+CREATE TABLE IF NOT EXISTS session_state (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    reset_pending INTEGER NOT NULL DEFAULT 1
+);
+INSERT OR IGNORE INTO session_state (id, reset_pending) VALUES (1, 1);
 """
 
 
@@ -53,20 +62,49 @@ class DB:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Донакатить колонки на базах, созданных прежними версиями схемы."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(commands)")}
+        if "fresh" not in cols:
+            self._conn.execute(
+                "ALTER TABLE commands ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0"
+            )
 
     def close(self) -> None:
         self._conn.close()
 
     # --- команды -----------------------------------------------------------
 
+    def request_new_session(self) -> None:
+        """Пометить, что следующий промпт стартует новую сессию Claude (/clear, /new)."""
+        self._conn.execute("UPDATE session_state SET reset_pending = 1 WHERE id = 1")
+        self._conn.commit()
+
     def enqueue(self, prompt: str, chat_id: int) -> int:
+        row = self._conn.execute(
+            "SELECT reset_pending FROM session_state WHERE id = 1"
+        ).fetchone()
+        fresh = 1 if row and row["reset_pending"] else 0
         cur = self._conn.execute(
-            "INSERT INTO commands (prompt, chat_id, created_at) VALUES (?, ?, ?)",
-            (prompt, chat_id, time.time()),
+            "INSERT INTO commands (prompt, chat_id, fresh, created_at) VALUES (?, ?, ?, ?)",
+            (prompt, chat_id, fresh, time.time()),
         )
+        self._conn.execute("UPDATE session_state SET reset_pending = 0 WHERE id = 1")
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def history(self, limit: int = 10) -> list[sqlite3.Row]:
+        """Последние задачи, новые сверху: id, prompt, status, ok, output, created_at."""
+        return list(
+            self._conn.execute(
+                "SELECT id, prompt, status, ok, output, created_at FROM commands "
+                "ORDER BY id DESC LIMIT ?",
+                (max(1, limit),),
+            )
+        )
 
     def lease_next(self) -> CommandOut | None:
         """Вернуть в очередь протухшие leased, затем забрать одну задачу в работу."""
@@ -77,7 +115,7 @@ class DB:
             (now - LEASE_TTL,),
         )
         row = self._conn.execute(
-            "SELECT id, prompt, chat_id FROM commands "
+            "SELECT id, prompt, chat_id, fresh FROM commands "
             "WHERE status='queued' ORDER BY id LIMIT 1"
         ).fetchone()
         if row is None:
@@ -88,7 +126,9 @@ class DB:
             (now, row["id"]),
         )
         self._conn.commit()
-        return CommandOut(id=row["id"], prompt=row["prompt"], chat_id=row["chat_id"])
+        return CommandOut(
+            id=row["id"], prompt=row["prompt"], chat_id=row["chat_id"], fresh=bool(row["fresh"])
+        )
 
     def finish(self, command_id: int, ok: bool, output: str) -> int | None:
         """Записать результат. Вернуть chat_id для ответа в Telegram или None."""

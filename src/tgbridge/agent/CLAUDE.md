@@ -17,7 +17,7 @@ GET {server_url}/commands/next?timeout=25
 
 ## Особенности
 
-- **`run_prompt()`**: `asyncio.create_subprocess_exec(cfg.claude_bin, "-p", prompt, cwd=cfg.workdir)`, stderr слит в stdout, общий таймаут `cfg.prompt_timeout` → при превышении `proc.kill()`. `FileNotFoundError` (нет бинаря `claude`) отдаётся как обычный неуспешный результат, не роняет цикл.
+- **`run_prompt(cfg, prompt, fresh)`**: `asyncio.create_subprocess_exec(cfg.claude_bin, "-p", ["--continue" если не fresh], prompt, cwd=cfg.workdir)`, stderr слит в stdout, общий таймаут `cfg.prompt_timeout` → при превышении `proc.kill()`. `FileNotFoundError` (нет бинаря `claude`) отдаётся как обычный неуспешный результат, не роняет цикл. `fresh` приходит из `CommandOut` — решение о новой сессии принимает VPS, не агент.
 - **Промпт не парсится и не экранируется** — уходит в `claude` одним argv-элементом (не через shell). Расширяя поведение, не собирай команду строкой.
 - Результат режется по `MAX_OUTPUT` здесь и ещё раз на сервере — не полагайся на один слой.
 - Backoff сбрасывается в 1 после любого успешного ответа (в т.ч. `204`).

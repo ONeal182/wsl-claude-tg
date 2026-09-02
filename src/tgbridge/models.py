@@ -20,6 +20,7 @@ class CommandOut(BaseModel):
     id: int
     prompt: str
     chat_id: int
+    fresh: bool = False  # True -> агент стартует новую сессию Claude, иначе --continue
 
 
 class ResultIn(BaseModel):

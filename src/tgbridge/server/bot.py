@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -23,14 +24,55 @@ log = logging.getLogger("tgbridge.bot")
 START_TEXT = (
     "tgbridge на связи.\n"
     "Пришли текст — он уйдёт в WSL как промпт для Claude Code.\n"
+    "Каждый следующий промпт продолжает тот же разговор.\n"
+    "/clear, /new — начать новую сессию (забыть контекст)\n"
+    "/history — последние задачи\n"
     "/id — показать твой Telegram id\n"
     "/ping — проверка"
 )
+
+HISTORY_LIMIT = 15
+_PREVIEW = 60
 
 
 def id_reply(user_id: int, allowed_ids: set[int]) -> str:
     mark = "да" if user_id in allowed_ids else "НЕТ — добавь в TGBRIDGE_ALLOWED_USER_IDS"
     return f"твой id: `{user_id}`\nв allowlist: {mark}"
+
+
+def new_session_reply(user_id: int, allowed_ids: set[int], db: DB) -> str:
+    """/clear и /new: следующий промпт стартует новую сессию Claude с чистого листа."""
+    if user_id not in allowed_ids:
+        return "не в allowlist, игнорирую"
+    db.request_new_session()
+    return "🧹 контекст очищен — следующий промпт начнёт новую сессию"
+
+
+def _clip_preview(text: str) -> str:
+    one_line = " ".join(text.split())
+    return one_line if len(one_line) <= _PREVIEW else one_line[:_PREVIEW] + "…"
+
+
+def _status_mark(status: str, ok: int | None) -> str:
+    if status != "done":
+        return "⏳"
+    return "✅" if ok else "❌"
+
+
+def history_reply(user_id: int, allowed_ids: set[int], db: DB, limit: int = HISTORY_LIMIT) -> str:
+    if user_id not in allowed_ids:
+        return "не в allowlist, игнорирую"
+    rows = db.history(limit)
+    if not rows:
+        return "история пуста"
+    lines: list[str] = []
+    for r in rows:
+        when = time.strftime("%d.%m %H:%M", time.localtime(r["created_at"]))
+        lines.append(f"#{r['id']} {_status_mark(r['status'], r['ok'])} {when}")
+        lines.append(f"  → {_clip_preview(r['prompt'])}")
+        if r["output"]:
+            lines.append(f"  ← {_clip_preview(r['output'])}")
+    return "\n".join(lines)
 
 
 def prompt_reply(
@@ -60,6 +102,16 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
     @dp.message(Command("ping"))
     async def on_ping(msg: Message) -> None:
         await msg.answer("pong")
+
+    @dp.message(Command("clear", "new"))
+    async def on_new_session(msg: Message, db: DB) -> None:
+        uid = msg.from_user.id if msg.from_user else 0
+        await msg.answer(new_session_reply(uid, allowed_ids, db))
+
+    @dp.message(Command("history"))
+    async def on_history(msg: Message, db: DB) -> None:
+        uid = msg.from_user.id if msg.from_user else 0
+        await msg.answer(history_reply(uid, allowed_ids, db))
 
     @dp.message(F.text & ~F.text.startswith("/"))
     async def on_text(msg: Message, db: DB, wake: asyncio.Event) -> None:

@@ -69,11 +69,14 @@ def test_commands_next_empty_204(client):
 
 
 def test_queue_roundtrip(client):
-    cmd_id = client._app.state.db.enqueue(prompt="почини баг", chat_id=42)
+    db = client._app.state.db
+    db.enqueue(prompt="раскочегарь", chat_id=42)  # съедает стартовый fresh
+    client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    cmd_id = db.enqueue(prompt="почини баг", chat_id=42)
 
     r = client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
     assert r.status_code == 200
-    assert r.json() == {"id": cmd_id, "prompt": "почини баг", "chat_id": 42}
+    assert r.json() == {"id": cmd_id, "prompt": "почини баг", "chat_id": 42, "fresh": False}
 
     # уже leased -> очередь пуста
     assert client.get("/commands/next", params={"timeout": 1}, headers=AUTH).status_code == 204
@@ -82,6 +85,17 @@ def test_queue_roundtrip(client):
         f"/commands/{cmd_id}/result", json={"ok": True, "output": "готово"}, headers=AUTH
     )
     assert r.status_code == 200 and r.json() == {"ok": True}
+
+
+def test_commands_next_marks_fresh_after_new_session(client):
+    db = client._app.state.db
+    db.enqueue(prompt="p1", chat_id=1)
+    client.get("/commands/next", params={"timeout": 2}, headers=AUTH)  # p1 leased, fresh consumed
+    db.request_new_session()
+    db.enqueue(prompt="p2", chat_id=1)
+
+    r = client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    assert r.json()["fresh"] is True
 
 
 def test_result_unknown_id_ok_false(client):

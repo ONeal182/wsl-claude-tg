@@ -71,6 +71,62 @@ def test_finish_twice_second_is_none(db: DB):
     assert db.finish(cmd_id, ok=True, output="b") is None
 
 
+def test_first_ever_command_is_fresh(db: DB):
+    db.enqueue("first", 1)
+    assert db.lease_next().fresh is True
+
+
+def test_subsequent_commands_are_not_fresh(db: DB):
+    db.enqueue("first", 1)
+    db.enqueue("second", 1)
+    assert db.lease_next().fresh is True
+    assert db.lease_next().fresh is False
+
+
+def test_request_new_session_makes_next_command_fresh(db: DB):
+    db.enqueue("first", 1)
+    db.lease_next()  # съедает стартовый reset_pending
+    db.enqueue("second", 1)
+    assert db.lease_next().fresh is False
+
+    db.request_new_session()
+    db.enqueue("third", 1)
+    db.enqueue("fourth", 1)
+    assert db.lease_next().fresh is True
+    assert db.lease_next().fresh is False
+
+
+def test_reset_pending_persists_until_a_command_consumes_it(db: DB):
+    db.enqueue("first", 1)
+    db.lease_next()
+    db.request_new_session()
+    db.request_new_session()  # повторный /new ничего не ломает
+    db.enqueue("next", 1)
+    assert db.lease_next().fresh is True
+
+
+def test_history_newest_first_with_status(db: DB):
+    a = db.enqueue("prompt a", 1)
+    b = db.enqueue("prompt b", 1)
+    db.lease_next()  # a -> leased
+    db.lease_next()  # b -> leased
+    db.finish(a, ok=True, output="ответ a")
+    db.finish(b, ok=False, output="ошибка b")
+    c = db.enqueue("prompt c", 1)
+
+    rows = db.history(limit=10)
+    assert [r["id"] for r in rows] == [c, b, a]
+    assert (rows[0]["status"], rows[0]["prompt"]) == ("queued", "prompt c")
+    assert (rows[1]["status"], rows[1]["ok"], rows[1]["output"]) == ("done", 0, "ошибка b")
+    assert (rows[2]["status"], rows[2]["ok"], rows[2]["output"]) == ("done", 1, "ответ a")
+
+
+def test_history_respects_limit(db: DB):
+    for i in range(5):
+        db.enqueue(f"p{i}", 1)
+    assert len(db.history(limit=3)) == 3
+
+
 def test_log_notification_persists(db: DB):
     db.log_notification("hello", "warn")
     row = db._conn.execute("SELECT text, level FROM notifications").fetchone()

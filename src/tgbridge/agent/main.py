@@ -24,13 +24,19 @@ log = logging.getLogger("tgbridge.agent")
 MAX_OUTPUT = 8000  # больше в Telegram всё равно не уедет
 
 
-async def run_prompt(cfg: Settings, prompt: str) -> tuple[bool, str]:
-    """Выполнить промпт через `claude -p` в headless-режиме."""
+async def run_prompt(cfg: Settings, prompt: str, fresh: bool = False) -> tuple[bool, str]:
+    """Выполнить промпт через `claude -p` в headless-режиме.
+
+    `fresh=True`  — начать новую сессию Claude (после /clear, /new или самый первый промпт).
+    `fresh=False` — `--continue`: подхватить контекст предыдущего разговора в workdir.
+    """
+    argv = [cfg.claude_bin, "-p"]
+    if not fresh:
+        argv.append("--continue")
+    argv.append(prompt)
     try:
         proc = await asyncio.create_subprocess_exec(
-            cfg.claude_bin,
-            "-p",
-            prompt,
+            *argv,
             cwd=cfg.workdir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -50,8 +56,8 @@ async def run_prompt(cfg: Settings, prompt: str) -> tuple[bool, str]:
 
 
 async def handle(client: httpx.AsyncClient, cfg: Settings, cmd: CommandOut) -> None:
-    log.info("задача #%s: %s", cmd.id, cmd.prompt[:80])
-    ok, output = await run_prompt(cfg, cmd.prompt)
+    log.info("задача #%s (fresh=%s): %s", cmd.id, cmd.fresh, cmd.prompt[:80])
+    ok, output = await run_prompt(cfg, cmd.prompt, fresh=cmd.fresh)
     result = ResultIn(ok=ok, output=output)
     for attempt in range(5):
         try:

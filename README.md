@@ -4,6 +4,7 @@
 
 - **Уведомления наружу:** `tgnotify "текст"` → VPS → Telegram
 - **Промпты внутрь:** сообщение боту → VPS-очередь → агент в WSL → `claude -p` → ответ в Telegram
+  Промпты продолжают один разговор Claude; `/clear` или `/new` начинают новую сессию, `/history` — список последних задач.
 
 Домашняя машина делает только исходящие запросы — белый IP и проброс портов не нужны.
 
@@ -55,5 +56,5 @@ uv run tgnotify "проверка"           # WSL
 |---|---|---|---|
 | GET | `/healthz` | — | `{"ok": true}` |
 | POST | `/notify` | `{"text": "...", "level": "info\|warn\|error"}` | `{"ok": true}` |
-| GET | `/commands/next?timeout=25` | — | `200 {id, prompt, chat_id}` или `204` |
+| GET | `/commands/next?timeout=25` | — | `200 {id, prompt, chat_id, fresh}` или `204` |
 | POST | `/commands/{id}/result` | `{"ok": true, "output": "..."}` | `{"ok": true}` |

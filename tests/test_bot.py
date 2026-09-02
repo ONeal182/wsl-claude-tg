@@ -8,7 +8,13 @@ import pytest
 from aiogram import Bot
 
 from tgbridge.db import DB
-from tgbridge.server.bot import build_dispatcher, id_reply, prompt_reply
+from tgbridge.server.bot import (
+    build_dispatcher,
+    history_reply,
+    id_reply,
+    new_session_reply,
+    prompt_reply,
+)
 
 ALLOWED = {466404679}
 
@@ -40,6 +46,42 @@ def test_prompt_reply_rejects_stranger(db: DB):
     assert "не в allowlist" in reply
     assert not wake.is_set()
     assert db.lease_next() is None
+
+
+def test_new_session_reply_sets_reset_pending(db: DB):
+    out = new_session_reply(466404679, ALLOWED, db)
+    assert "сесси" in out.lower()
+    db.enqueue("следующий", 1)
+    assert db.lease_next().fresh is True
+
+
+def test_new_session_reply_rejects_stranger(db: DB):
+    out = new_session_reply(111, ALLOWED, db)
+    assert "не в allowlist" in out
+    db.enqueue("следующий", 1)
+    db.lease_next()  # стартовый reset_pending
+    db.enqueue("ещё", 1)
+    assert db.lease_next().fresh is False  # чужой /new не сбросил сессию
+
+
+def test_history_reply_lists_recent_tasks(db: DB):
+    a = db.enqueue("почини парсер даты", 1)
+    db.lease_next()
+    db.finish(a, ok=True, output="готово, добавил guard")
+    db.enqueue("собери отчёт за неделю", 1)
+
+    out = history_reply(466404679, ALLOWED, db)
+    assert f"#{a}" in out and "#2" in out
+    assert "почини парсер даты" in out and "собери отчёт за неделю" in out
+    assert "✅" in out and "⏳" in out
+
+
+def test_history_reply_empty(db: DB):
+    assert "пуст" in history_reply(466404679, ALLOWED, db).lower()
+
+
+def test_history_reply_rejects_stranger(db: DB):
+    assert "не в allowlist" in history_reply(111, ALLOWED, db)
 
 
 # --- тонкая проверка проводки aiogram -------------------------------------
@@ -95,3 +137,24 @@ async def test_dispatcher_text_from_stranger_rejected(bot, db: DB, answers):
     await dp.feed_raw_update(bot, _raw("привет", 111), db=db, wake=asyncio.Event())
     assert answers and "не в allowlist" in answers[0]
     assert db.lease_next() is None
+
+
+async def test_dispatcher_clear_requests_new_session(bot, db: DB, answers):
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(bot, _raw("/clear", 466404679), db=db, wake=asyncio.Event())
+    assert answers and "сесси" in answers[0].lower()
+    db.enqueue("next", 1)
+    assert db.lease_next().fresh is True
+
+
+async def test_dispatcher_new_is_alias_of_clear(bot, db: DB, answers):
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(bot, _raw("/new", 466404679), db=db, wake=asyncio.Event())
+    assert answers and "сесси" in answers[0].lower()
+
+
+async def test_dispatcher_history_lists(bot, db: DB, answers):
+    db.enqueue("задача раз", 1)
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(bot, _raw("/history", 466404679), db=db, wake=asyncio.Event())
+    assert answers and "задача раз" in answers[0]
