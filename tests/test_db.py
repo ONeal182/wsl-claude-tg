@@ -188,6 +188,17 @@ def test_sessions_respects_limit(db: DB):
     assert len(db.sessions(limit=2)) == 2
 
 
+def test_latest_session_id_none_when_empty(db: DB):
+    assert db.latest_session_id() is None
+
+
+def test_latest_session_id_is_most_recently_updated(db: DB):
+    db.record_session("old", prompt="a", result="")
+    db._conn.execute("UPDATE sessions SET updated_at = 1 WHERE session_id = 'old'")
+    db.record_session("fresh", prompt="b", result="")
+    assert db.latest_session_id() == "fresh"
+
+
 def test_finish_records_session_when_id_present(db: DB):
     cid = db.enqueue("собери отчёт", 1)
     db.lease_next()

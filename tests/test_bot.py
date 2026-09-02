@@ -11,9 +11,10 @@ from tgbridge.db import DB
 from tgbridge.server.bot import (
     bot_commands,
     build_dispatcher,
+    clear_reply,
     history_reply,
     id_reply,
-    new_session_reply,
+    new_reply,
     prompt_reply,
     render_md_chunks,
     resume_keyboard,
@@ -54,20 +55,51 @@ def test_prompt_reply_rejects_stranger(db: DB):
     assert db.lease_next() is None
 
 
-def test_new_session_reply_sets_reset_pending(db: DB):
-    out = new_session_reply(466404679, ALLOWED, db)
+def test_clear_reply_sets_reset_pending(db: DB):
+    out = clear_reply(466404679, ALLOWED, db)
     assert "сесси" in out.lower()
     db.enqueue("следующий", 1)
     assert db.lease_next().fresh is True
 
 
-def test_new_session_reply_rejects_stranger(db: DB):
-    out = new_session_reply(111, ALLOWED, db)
+def test_clear_reply_rejects_stranger(db: DB):
+    out = clear_reply(111, ALLOWED, db)
     assert "не в allowlist" in out
     db.enqueue("следующий", 1)
     db.lease_next()  # стартовый reset_pending
     db.enqueue("ещё", 1)
-    assert db.lease_next().fresh is False  # чужой /new не сбросил сессию
+    assert db.lease_next().fresh is False  # чужой /clear не сбросил сессию
+
+
+def test_new_reply_forks_latest_session(db: DB):
+    db.record_session("sess-live", prompt="о чём говорили", result="о том о сём")
+    db.enqueue("сид", 1)
+    db.lease_next()  # съесть стартовый fresh
+    out = new_reply(466404679, ALLOWED, db)
+    assert "sess-live" in out
+    db.enqueue("продолжаем", 1)
+    got = db.lease_next()
+    assert got.resume_from == "sess-live" and got.fresh is False
+
+
+def test_new_reply_without_journal_falls_back_to_fresh(db: DB):
+    db.enqueue("сид", 1)
+    db.lease_next()  # съесть стартовый fresh
+    out = new_reply(466404679, ALLOWED, db)
+    assert "сесси" in out.lower()
+    db.enqueue("первый настоящий", 1)
+    got = db.lease_next()
+    assert got.fresh is True and got.resume_from == ""
+
+
+def test_new_reply_rejects_stranger(db: DB):
+    db.record_session("sess-live", prompt="p", result="r")
+    out = new_reply(111, ALLOWED, db)
+    assert "не в allowlist" in out
+    db.enqueue("сид", 1)
+    db.lease_next()
+    db.enqueue("ещё", 1)
+    assert db.lease_next().resume_from == ""  # чужой /new не тронул сессию
 
 
 def test_resume_reply_pins_next_command_to_session(db: DB):
@@ -256,10 +288,15 @@ async def test_dispatcher_clear_requests_new_session(bot, db: DB, answers):
     assert db.lease_next().fresh is True
 
 
-async def test_dispatcher_new_is_alias_of_clear(bot, db: DB, answers):
+async def test_dispatcher_new_forks_latest_session(bot, db: DB, answers):
+    db.record_session("sess-live", prompt="p", result="r")
+    db.enqueue("сид", 1)
+    db.lease_next()  # съесть стартовый fresh
     dp = build_dispatcher(ALLOWED)
     await dp.feed_raw_update(bot, _raw("/new", 466404679), db=db, wake=asyncio.Event())
-    assert answers and "сесси" in answers[0].lower()
+    assert answers and "sess-live" in answers[0]
+    db.enqueue("продолжаем", 1)
+    assert db.lease_next().resume_from == "sess-live"
 
 
 async def test_dispatcher_history_lists(bot, db: DB, answers):

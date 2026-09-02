@@ -206,6 +206,13 @@ class DB:
         )
         self._conn.commit()
 
+    def latest_session_id(self) -> str | None:
+        """id самой свежей сессии Claude из журнала (для /new — форк текущей)."""
+        row = self._conn.execute(
+            "SELECT session_id FROM sessions ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        return row["session_id"] if row else None
+
     def sessions(self, limit: int = 15) -> list[sqlite3.Row]:
         """Сессии Claude, недавние сверху."""
         return list(

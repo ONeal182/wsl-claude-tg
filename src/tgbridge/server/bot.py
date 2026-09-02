@@ -30,8 +30,8 @@ log = logging.getLogger("tgbridge.bot")
 
 # (команда, описание) — попадает в меню-кнопку бота через set_my_commands
 COMMANDS: list[tuple[str, str]] = [
-    ("new", "новая сессия — забыть контекст"),
-    ("clear", "то же, что /new"),
+    ("new", "новая сессия, контекст сохранить (форк текущей)"),
+    ("clear", "новая сессия с чистого листа"),
     ("resume", "продолжить сессию Claude по id (форк)"),
     ("sessions", "сохранённые сессии Claude"),
     ("history", "последние задачи"),
@@ -44,7 +44,8 @@ START_TEXT = (
     "tgbridge на связи.\n"
     "Пришли текст — он уйдёт в WSL как промпт для Claude Code.\n"
     "Каждый следующий промпт продолжает тот же разговор.\n"
-    "/clear, /new — начать новую сессию (забыть контекст)\n"
+    "/new — новая сессия, но контекст сохранить (форк текущей)\n"
+    "/clear — новая сессия с чистого листа (забыть контекст)\n"
     "/resume <id> — продолжить конкретную сессию Claude (в новой ветке)\n"
     "/sessions — сохранённые сессии Claude (id для /resume)\n"
     "/history — последние задачи\n"
@@ -119,12 +120,31 @@ def id_reply(user_id: int, allowed_ids: set[int]) -> str:
     return f"твой id: `{user_id}`\nв allowlist: {mark}"
 
 
-def new_session_reply(user_id: int, allowed_ids: set[int], db: DB) -> str:
-    """/clear и /new: следующий промпт стартует новую сессию Claude с чистого листа."""
+def clear_reply(user_id: int, allowed_ids: set[int], db: DB) -> str:
+    """/clear: следующий промпт стартует новую сессию Claude с чистого листа."""
     if user_id not in allowed_ids:
         return "не в allowlist, игнорирую"
     db.request_new_session()
-    return "🧹 контекст очищен — следующий промпт начнёт новую сессию"
+    return "🧹 контекст очищен — следующий промпт начнёт новую сессию с нуля"
+
+
+def new_reply(user_id: int, allowed_ids: set[int], db: DB) -> str:
+    """/new: новая сессия Claude, но с сохранением контекста — форк текущей.
+
+    Следующий промпт уедет как `--resume <последняя-сессия> --fork-session`.
+    Если журнал сессий ещё пуст (форкать нечего) — обычный чистый старт.
+    """
+    if user_id not in allowed_ids:
+        return "не в allowlist, игнорирую"
+    sid = db.latest_session_id()
+    if not sid:
+        db.request_new_session()
+        return "🌱 сессий пока нет — следующий промпт начнёт новую с нуля"
+    db.request_resume(sid)
+    return (
+        f"🌱 следующий промпт продолжит текущую сессию `{sid}` в новой ветке "
+        "(контекст сохранён, исходная сессия не тронута)"
+    )
 
 
 def resume_reply(user_id: int, allowed_ids: set[int], db: DB, session_id: str) -> str:
@@ -216,10 +236,15 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
     async def on_ping(msg: Message) -> None:
         await msg.answer("pong")
 
-    @dp.message(Command("clear", "new"))
-    async def on_new_session(msg: Message, db: DB) -> None:
+    @dp.message(Command("clear"))
+    async def on_clear(msg: Message, db: DB) -> None:
         uid = msg.from_user.id if msg.from_user else 0
-        await msg.answer(new_session_reply(uid, allowed_ids, db))
+        await msg.answer(clear_reply(uid, allowed_ids, db))
+
+    @dp.message(Command("new"))
+    async def on_new(msg: Message, db: DB) -> None:
+        uid = msg.from_user.id if msg.from_user else 0
+        await msg.answer(new_reply(uid, allowed_ids, db), parse_mode="Markdown")
 
     @dp.message(Command("resume"))
     async def on_resume(msg: Message, command: CommandObject, db: DB) -> None:
