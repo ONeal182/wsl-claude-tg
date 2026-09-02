@@ -19,6 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Бот получает `db` и `wake` не импортом, а как kwargs `start_polling(bot, db=..., wake=...)`; в хендлерах они — обычные параметры (DI aiogram).
 - Логика ответов бота — чистые функции `id_reply()` / `prompt_reply()` / `new_session_reply()` / `history_reply()` в `bot.py`; хендлеры aiogram только вызывают их и `msg.answer()`. Тесты бьют по чистым функциям + пара smoke-тестов через `dp.feed_raw_update` с перехватом `Message.answer`.
 - `/clear` и `/new` — синонимы: `db.request_new_session()` взводит `reset_pending`, следующий `enqueue()` отдаёт задачу с `fresh=1`. Команды промпт в очередь **не** кладут. `/history` рендерит `db.history()` (превью в 60 символов, статус ⏳/✅/❌).
+- Меню-кнопка бота в Telegram: `run_bot()` при старте зовёт `bot.set_my_commands(bot_commands())` из списка `COMMANDS`; ошибка этого вызова не роняет старт (только warning). Добавил команду — впиши её в `COMMANDS`.
 - `handle_signals=False` у `start_polling` — сигналами управляет uvicorn/systemd, не бот.
 - Тесты гоняются с `bot_token=""` → ветка «только API». Не ломай этот путь: не обращайся к `app.state.bot` без проверки на `None`.
 

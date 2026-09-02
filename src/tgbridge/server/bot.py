@@ -15,11 +15,21 @@ import time
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import BotCommand, Message
 
 from ..db import DB
 
 log = logging.getLogger("tgbridge.bot")
+
+# (команда, описание) — попадает в меню-кнопку бота через set_my_commands
+COMMANDS: list[tuple[str, str]] = [
+    ("new", "новая сессия — забыть контекст"),
+    ("clear", "то же, что /new"),
+    ("history", "последние задачи"),
+    ("id", "показать твой Telegram id"),
+    ("ping", "проверка связи"),
+    ("start", "справка"),
+]
 
 START_TEXT = (
     "tgbridge на связи.\n"
@@ -33,6 +43,11 @@ START_TEXT = (
 
 HISTORY_LIMIT = 15
 _PREVIEW = 60
+
+
+def bot_commands() -> list[BotCommand]:
+    """Список для меню-кнопки бота в Telegram."""
+    return [BotCommand(command=c, description=d) for c, d in COMMANDS]
 
 
 def id_reply(user_id: int, allowed_ids: set[int]) -> str:
@@ -123,4 +138,8 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
 
 async def run_bot(bot: Bot, dp: Dispatcher, db: DB, wake: asyncio.Event) -> None:
     log.info("старт polling Telegram")
+    try:
+        await bot.set_my_commands(bot_commands())
+    except Exception as e:  # noqa: BLE001 — меню-кнопка не критична для старта
+        log.warning("не удалось выставить меню команд: %s", e)
     await dp.start_polling(bot, db=db, wake=wake, handle_signals=False)

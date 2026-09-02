@@ -9,11 +9,13 @@ from aiogram import Bot
 
 from tgbridge.db import DB
 from tgbridge.server.bot import (
+    bot_commands,
     build_dispatcher,
     history_reply,
     id_reply,
     new_session_reply,
     prompt_reply,
+    run_bot,
 )
 
 ALLOWED = {466404679}
@@ -82,6 +84,30 @@ def test_history_reply_empty(db: DB):
 
 def test_history_reply_rejects_stranger(db: DB):
     assert "не в allowlist" in history_reply(111, ALLOWED, db)
+
+
+def test_bot_commands_cover_every_handler():
+    names = {c.command for c in bot_commands()}
+    assert {"start", "new", "clear", "history", "id", "ping"} <= names
+    assert all(c.description for c in bot_commands())
+
+
+async def test_run_bot_publishes_command_menu(db: DB):
+    bot = AsyncMock()
+    dp = AsyncMock()
+    await run_bot(bot, dp, db, asyncio.Event())
+    bot.set_my_commands.assert_awaited_once()
+    published = {c.command for c in bot.set_my_commands.await_args.args[0]}
+    assert {"history", "new", "clear"} <= published
+    dp.start_polling.assert_awaited_once()
+
+
+async def test_run_bot_survives_set_commands_failure(db: DB):
+    bot = AsyncMock()
+    bot.set_my_commands.side_effect = RuntimeError("telegram unreachable")
+    dp = AsyncMock()
+    await run_bot(bot, dp, db, asyncio.Event())  # не должно бросить
+    dp.start_polling.assert_awaited_once()
 
 
 # --- тонкая проверка проводки aiogram -------------------------------------
