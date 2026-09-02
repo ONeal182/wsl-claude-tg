@@ -15,6 +15,7 @@ from tgbridge.server.bot import (
     id_reply,
     new_session_reply,
     prompt_reply,
+    resume_keyboard,
     resume_reply,
     run_bot,
     sessions_reply,
@@ -119,6 +120,17 @@ def test_sessions_reply_empty(db: DB):
 
 def test_sessions_reply_rejects_stranger(db: DB):
     assert "не в allowlist" in sessions_reply(111, ALLOWED, db)
+
+
+def test_resume_keyboard_carries_session_callback():
+    kb = resume_keyboard("9f5d203c-ca4c-4aab-b4b9-5ffb48deb907")
+    btn = kb.inline_keyboard[0][0]
+    assert btn.callback_data == "resume:9f5d203c-ca4c-4aab-b4b9-5ffb48deb907"
+    assert btn.text
+
+
+def test_resume_keyboard_none_without_session():
+    assert resume_keyboard("") is None
 
 
 def test_history_reply_rejects_stranger(db: DB):
@@ -246,3 +258,56 @@ async def test_dispatcher_sessions_lists(bot, db: DB, answers):
     dp = build_dispatcher(ALLOWED)
     await dp.feed_raw_update(bot, _raw("/sessions", 466404679), db=db, wake=asyncio.Event())
     assert answers and "sess-777" in answers[0] and "сделай отчёт" in answers[0]
+
+
+async def test_dispatcher_resume_button_pins_session(bot, db: DB, monkeypatch):
+    toasts: list[str] = []
+
+    async def fake_cb_answer(self, text=None, **kw):  # noqa: ANN001
+        toasts.append(text or "")
+
+    monkeypatch.setattr("aiogram.types.CallbackQuery.answer", fake_cb_answer)
+    upd = {
+        "update_id": 1,
+        "callback_query": {
+            "id": "cb1",
+            "chat_instance": "ci",
+            "from": {"id": 466404679, "is_bot": False, "first_name": "T"},
+            "data": "resume:sess-abc",
+            "message": {
+                "message_id": 5,
+                "date": int(time.time()),
+                "chat": {"id": 466404679, "type": "private"},
+            },
+        },
+    }
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(bot, upd, db=db, wake=asyncio.Event())
+    assert toasts and "sess-abc" in toasts[0]
+    db.enqueue("go", 1)
+    assert db.lease_next().resume_from == "sess-abc"
+
+
+async def test_dispatcher_resume_button_ignores_stranger(bot, db: DB, monkeypatch):
+    async def fake_cb_answer(self, text=None, **kw):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr("aiogram.types.CallbackQuery.answer", fake_cb_answer)
+    upd = {
+        "update_id": 2,
+        "callback_query": {
+            "id": "cb2",
+            "chat_instance": "ci",
+            "from": {"id": 111, "is_bot": False, "first_name": "X"},
+            "data": "resume:sess-abc",
+            "message": {
+                "message_id": 6,
+                "date": int(time.time()),
+                "chat": {"id": 111, "type": "private"},
+            },
+        },
+    }
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(bot, upd, db=db, wake=asyncio.Event())
+    db.enqueue("go", 1)
+    assert db.lease_next().resume_from == ""

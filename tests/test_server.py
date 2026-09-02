@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -113,6 +115,37 @@ def test_commands_next_carries_resume_from(client):
 
     r = client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
     assert r.json()["resume_from"] == "sess-abc"
+
+
+def test_result_notification_shows_session_id_and_button(client):
+    db = client._app.state.db
+    cid = db.enqueue(prompt="p", chat_id=42)
+    client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    client._app.state.bot = AsyncMock()
+
+    client.post(
+        f"/commands/{cid}/result",
+        json={"ok": True, "output": "готово", "session_id": "sess-abc"},
+        headers=AUTH,
+    )
+    call = client._app.state.bot.send_message.await_args
+    sent_text = call.args[1] if len(call.args) > 1 else call.kwargs["text"]
+    assert "sess-abc" in sent_text
+    kb = call.kwargs["reply_markup"]
+    assert kb.inline_keyboard[0][0].callback_data == "resume:sess-abc"
+
+
+def test_result_notification_no_button_without_session_id(client):
+    db = client._app.state.db
+    cid = db.enqueue(prompt="p", chat_id=42)
+    client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    client._app.state.bot = AsyncMock()
+
+    client.post(
+        f"/commands/{cid}/result", json={"ok": True, "output": "готово"}, headers=AUTH
+    )
+    call = client._app.state.bot.send_message.await_args
+    assert call.kwargs.get("reply_markup") is None
 
 
 def test_result_with_session_id_populates_sessions_table(client):

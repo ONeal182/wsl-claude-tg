@@ -15,7 +15,13 @@ import time
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandObject
-from aiogram.types import BotCommand, Message
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from ..db import DB
 
@@ -53,6 +59,25 @@ _PREVIEW = 60
 def bot_commands() -> list[BotCommand]:
     """Список для меню-кнопки бота в Telegram."""
     return [BotCommand(command=c, description=d) for c, d in COMMANDS]
+
+
+RESUME_CB_PREFIX = "resume:"
+
+
+def resume_keyboard(session_id: str) -> InlineKeyboardMarkup | None:
+    """Кнопка под результатом задачи: следующий промпт продолжит эту сессию Claude."""
+    if not session_id:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="▶️ Перейти к сессии",
+                    callback_data=f"{RESUME_CB_PREFIX}{session_id}",
+                )
+            ]
+        ]
+    )
 
 
 def id_reply(user_id: int, allowed_ids: set[int]) -> str:
@@ -183,6 +208,12 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
     async def on_text(msg: Message, db: DB, wake: asyncio.Event) -> None:
         uid = msg.from_user.id if msg.from_user else 0
         await msg.answer(prompt_reply(msg.text, uid, msg.chat.id, allowed_ids, db, wake))
+
+    @dp.callback_query(F.data.startswith(RESUME_CB_PREFIX))
+    async def on_resume_cb(cb: CallbackQuery, db: DB) -> None:
+        uid = cb.from_user.id if cb.from_user else 0
+        sid = (cb.data or "")[len(RESUME_CB_PREFIX):]
+        await cb.answer(resume_reply(uid, allowed_ids, db, sid)[:200])
 
     return dp
 

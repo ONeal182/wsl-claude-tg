@@ -23,7 +23,7 @@ from ..config import Settings, load
 from ..db import DB
 from ..models import NotifyIn, ResultIn
 from .auth import make_auth_dep
-from .bot import build_dispatcher, run_bot
+from .bot import build_dispatcher, resume_keyboard, run_bot
 
 log = logging.getLogger("tgbridge.server")
 
@@ -108,8 +108,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if chat_id is not None and app.state.bot is not None:
             head = f"✅ #{command_id}" if body.ok else f"❌ #{command_id}"
             text = _clip(f"{head}\n\n{body.output}" if body.output else head)
+            if body.session_id:
+                text += f"\n\n🧩 сессия {body.session_id}"
             with contextlib.suppress(Exception):
-                await app.state.bot.send_message(chat_id, text)
+                await app.state.bot.send_message(
+                    chat_id, text, reply_markup=resume_keyboard(body.session_id)
+                )
         return {"ok": chat_id is not None}
 
     return app

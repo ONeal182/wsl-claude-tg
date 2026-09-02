@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **наружу:** `tgnotify` → `POST /notify` на VPS → Telegram
 - **внутрь:** сообщение боту → очередь на VPS → агент в WSL забирает через long-poll → `claude -p --output-format json [--continue | --resume <id> --fork-session]` → `POST /commands/{id}/result` → ответ в Telegram
 
-Промпты по умолчанию продолжают один разговор Claude (`--continue`). `/clear` и `/new` в боте помечают на VPS «следующий промпт — новая сессия»; `/resume <id>` — «следующий промпт продолжит сессию `<id>` в форке»; `/sessions` показывает пройденные через мост сессии Claude (id + title), `/history` — последние задачи.
+Промпты по умолчанию продолжают один разговор Claude (`--continue`). `/clear` и `/new` в боте помечают на VPS «следующий промпт — новая сессия»; `/resume <id>` — «следующий промпт продолжит сессию `<id>` в форке»; `/sessions` показывает пройденные через мост сессии Claude (id + title), `/history` — последние задачи. Ответ на каждую задачу содержит id сессии и инлайн-кнопку «Перейти к сессии» (= `/resume` этой сессии).
 
 Домашний ПК делает **только исходящие** запросы: динамический IP и NAT не мешают. Всё, что должно пережить выключенный ПК (очередь промптов), лежит на VPS.
 
