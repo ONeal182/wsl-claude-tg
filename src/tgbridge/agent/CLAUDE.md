@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Legacy.** В деплое этот агент заменён на `claude remote-control` (см. корневой
+> CLAUDE.md и `deploy/tgbridge-agent.service`). Код и `tests/test_agent.py` в дереве
+> остаются; правь их, только если сознательно возвращаешь long-poll поток. Контракт
+> `models.py` не ломаем — сервер всё ещё умеет очередь.
+
 Работает **в WSL на домашнем ПК**. Единственная связь с внешним миром — исходящий long-poll к VPS.
 
 ## Цикл (`loop` в `main.py`)

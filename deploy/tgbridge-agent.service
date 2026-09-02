@@ -1,22 +1,28 @@
 # WSL (домашняя машина) — user-юнит. Требует systemd=true в /etc/wsl.conf.
 # Ставится скриптом deploy/wsl-setup.sh. Управление:
 #   systemctl --user status tgbridge-agent
-#   journalctl --user -u tgbridge-agent -f
+#   journalctl --user -u tgbridge-agent -f    # тут печатается URL/QR сессии
+#
+# Держит `claude remote-control` (server mode): локальные сессии Claude Code
+# видны в списке на claude.ai/code и управляются оттуда и из приложения Claude.
+# Пришёл на смену Python-агенту long-poll (src/tgbridge/agent, теперь legacy —
+# см. CLAUDE.md). Требует `claude` в PATH и логин через claude.ai (`claude /login`).
 [Unit]
-Description=tgbridge agent (pulls prompts from VPS via tunnel, runs claude -p)
-After=network-online.target tgbridge-tunnel.service
-Wants=network-online.target tgbridge-tunnel.service
+Description=claude remote-control server (local sessions steerable from claude.ai/code)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/tgbridge
-# systemd --user даёт урезанный PATH — добавляем ~/.local/bin (там claude, node, pnpm)
+WorkingDirectory=%h
+# systemd --user даёт урезанный PATH — добавляем ~/.local/bin (там claude, node)
 Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=%h/tgbridge/.env
-ExecStart=%h/tgbridge/.venv/bin/tgbridge-agent
+# echo y — снимает разовый запрос «Enable Remote Control? (y/n)» (у systemd нет TTY).
+# server mode: при старте оживляет ранее обслуженные сессии из этого cwd (~4 ч),
+# иначе пре-создаёт одну (wsl-home). Новые сессии с claude.ai — тоже в этом cwd.
+ExecStart=/bin/sh -c 'echo y | claude remote-control --name wsl-home'
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=default.target

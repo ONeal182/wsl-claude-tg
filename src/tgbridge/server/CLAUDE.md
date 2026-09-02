@@ -4,6 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Работает **на VPS**. Один процесс: FastAPI (HTTP API для WSL) + фоновый aiogram-бот (long-poll к Telegram).
 
+> После перехода WSL на `claude remote-control` (см. корневой CLAUDE.md) активна только
+> ветка `/notify` → Telegram. Ручки `/commands/*`, `/projects` и команды бота
+> (`/select_project`, `/sessions`, `/history`, `/new`, `/resume`, `/clear`) работают как
+> прежде, но очередь никто не разбирает — это legacy-контур, код трогаем осторожно.
+
 ## Порядок запуска (lifespan в `app.py`)
 
 1. `DB(cfg.db_path)` — открыть/создать SQLite.

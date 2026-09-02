@@ -2,11 +2,11 @@
 
 Мост `WSL (дом) ⇄ VPS (статический IP) ⇄ Telegram`.
 
-- **Уведомления наружу:** `tgnotify "текст"` → VPS → Telegram
-- **Промпты внутрь:** сообщение боту → VPS-очередь → агент в WSL → `claude -p` → ответ в Telegram
-  Промпты продолжают один разговор Claude; `/clear` или `/new` начинают новую сессию,
-  `/resume <id>` продолжает конкретную сессию Claude в новой ветке, `/sessions` — список
-  пройденных сессий с их id, `/history` — список последних задач.
+- **Уведомления наружу:** `tgnotify "текст"` → VPS → Telegram (активно)
+- **Промпты внутрь:** заменено на Claude Code **Remote Control** — `tgbridge-agent.service`
+  в WSL держит `claude remote-control`, сессии видны и управляются с claude.ai/code и
+  из приложения Claude. Прежний путь «бот → VPS-очередь → агент → `claude -p`»
+  (`src/tgbridge/agent/`) — legacy, из деплоя убран; код и тесты в дереве остаются.
 
 Домашняя машина делает только исходящие запросы — белый IP и проброс портов не нужны.
 
@@ -15,7 +15,7 @@
 | Путь | Где работает | Что делает |
 |---|---|---|
 | `src/tgbridge/server/` | VPS | aiogram-бот (long-poll к Telegram) + FastAPI HTTP API + очередь SQLite |
-| `src/tgbridge/agent/` | WSL | long-poll к VPS, запуск `claude -p`, возврат результата |
+| `src/tgbridge/agent/` | WSL | **legacy** long-poll к VPS + `claude -p`; в деплое заменён на `claude remote-control` |
 | `src/tgbridge/cli/` | WSL | `tgnotify` — отправка уведомлений |
 
 ## Установка
@@ -30,7 +30,7 @@ cp .env.example .env                 # заполнить значения
 
 ```bash
 uv run tgbridge-server               # VPS
-uv run tgbridge-agent                # WSL
+uv run tgbridge-agent                # WSL — legacy; в деплое: claude remote-control --name wsl-home
 uv run tgnotify "проверка"           # WSL
 ```
 
