@@ -21,6 +21,8 @@ class CommandOut(BaseModel):
     prompt: str
     chat_id: int
     fresh: bool = False  # True -> агент стартует новую сессию Claude, иначе --continue
+    # непусто -> агент делает `claude -p --resume <id> --fork-session` (перевешивает fresh)
+    resume_from: str = ""
 
 
 class ResultIn(BaseModel):

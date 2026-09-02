@@ -76,7 +76,13 @@ def test_queue_roundtrip(client):
 
     r = client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
     assert r.status_code == 200
-    assert r.json() == {"id": cmd_id, "prompt": "почини баг", "chat_id": 42, "fresh": False}
+    assert r.json() == {
+        "id": cmd_id,
+        "prompt": "почини баг",
+        "chat_id": 42,
+        "fresh": False,
+        "resume_from": "",
+    }
 
     # уже leased -> очередь пуста
     assert client.get("/commands/next", params={"timeout": 1}, headers=AUTH).status_code == 204
@@ -96,6 +102,17 @@ def test_commands_next_marks_fresh_after_new_session(client):
 
     r = client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
     assert r.json()["fresh"] is True
+
+
+def test_commands_next_carries_resume_from(client):
+    db = client._app.state.db
+    db.enqueue(prompt="p1", chat_id=1)
+    client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    db.request_resume("sess-abc")
+    db.enqueue(prompt="p2", chat_id=1)
+
+    r = client.get("/commands/next", params={"timeout": 2}, headers=AUTH)
+    assert r.json()["resume_from"] == "sess-abc"
 
 
 def test_result_unknown_id_ok_false(client):

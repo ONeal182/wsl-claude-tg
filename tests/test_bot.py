@@ -15,6 +15,7 @@ from tgbridge.server.bot import (
     id_reply,
     new_session_reply,
     prompt_reply,
+    resume_reply,
     run_bot,
 )
 
@@ -66,6 +67,28 @@ def test_new_session_reply_rejects_stranger(db: DB):
     assert db.lease_next().fresh is False  # чужой /new не сбросил сессию
 
 
+def test_resume_reply_pins_next_command_to_session(db: DB):
+    out = resume_reply(466404679, ALLOWED, db, "b463918f-9e3d-4228-a202-5c6f7c0d6264")
+    assert "b463918f-9e3d-4228-a202-5c6f7c0d6264" in out
+    db.enqueue("продолжаем", 1)
+    got = db.lease_next()
+    assert got.resume_from == "b463918f-9e3d-4228-a202-5c6f7c0d6264"
+
+
+def test_resume_reply_without_id_shows_usage(db: DB):
+    out = resume_reply(466404679, ALLOWED, db, "   ")
+    assert "/resume" in out
+    db.enqueue("p", 1)
+    assert db.lease_next().resume_from == ""
+
+
+def test_resume_reply_rejects_stranger(db: DB):
+    out = resume_reply(111, ALLOWED, db, "sess-abc")
+    assert "не в allowlist" in out
+    db.enqueue("p", 1)
+    assert db.lease_next().resume_from == ""
+
+
 def test_history_reply_lists_recent_tasks(db: DB):
     a = db.enqueue("почини парсер даты", 1)
     db.lease_next()
@@ -88,7 +111,7 @@ def test_history_reply_rejects_stranger(db: DB):
 
 def test_bot_commands_cover_every_handler():
     names = {c.command for c in bot_commands()}
-    assert {"start", "new", "clear", "history", "id", "ping"} <= names
+    assert {"start", "new", "clear", "resume", "history", "id", "ping"} <= names
     assert all(c.description for c in bot_commands())
 
 
@@ -184,3 +207,19 @@ async def test_dispatcher_history_lists(bot, db: DB, answers):
     dp = build_dispatcher(ALLOWED)
     await dp.feed_raw_update(bot, _raw("/history", 466404679), db=db, wake=asyncio.Event())
     assert answers and "задача раз" in answers[0]
+
+
+async def test_dispatcher_resume_pins_session(bot, db: DB, answers):
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(
+        bot, _raw("/resume sess-abc", 466404679), db=db, wake=asyncio.Event()
+    )
+    assert answers and "sess-abc" in answers[0]
+    db.enqueue("go", 1)
+    assert db.lease_next().resume_from == "sess-abc"
+
+
+async def test_dispatcher_resume_without_arg_shows_usage(bot, db: DB, answers):
+    dp = build_dispatcher(ALLOWED)
+    await dp.feed_raw_update(bot, _raw("/resume", 466404679), db=db, wake=asyncio.Event())
+    assert answers and "/resume" in answers[0]

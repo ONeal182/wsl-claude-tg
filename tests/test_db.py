@@ -105,6 +105,36 @@ def test_reset_pending_persists_until_a_command_consumes_it(db: DB):
     assert db.lease_next().fresh is True
 
 
+def test_request_resume_stamps_next_command_only(db: DB):
+    db.enqueue("warmup", 1)
+    db.lease_next()
+
+    db.request_resume("sess-xyz")
+    db.enqueue("first after resume", 1)
+    db.enqueue("second", 1)
+
+    a = db.lease_next()
+    b = db.lease_next()
+    assert (a.resume_from, a.fresh) == ("sess-xyz", False)
+    assert (b.resume_from, b.fresh) == ("", False)
+
+
+def test_request_resume_clears_pending_new_session(db: DB):
+    db.request_new_session()
+    db.request_resume("sess-xyz")
+    db.enqueue("p", 1)
+    got = db.lease_next()
+    assert got.resume_from == "sess-xyz" and got.fresh is False
+
+
+def test_new_session_clears_pending_resume(db: DB):
+    db.request_resume("sess-xyz")
+    db.request_new_session()
+    db.enqueue("p", 1)
+    got = db.lease_next()
+    assert got.resume_from == "" and got.fresh is True
+
+
 def test_history_newest_first_with_status(db: DB):
     a = db.enqueue("prompt a", 1)
     b = db.enqueue("prompt b", 1)

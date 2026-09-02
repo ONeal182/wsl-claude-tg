@@ -29,9 +29,10 @@ CREATE TABLE IF NOT EXISTS commands (
     chat_id    INTEGER NOT NULL,
     status     TEXT    NOT NULL DEFAULT 'queued',
     output     TEXT    NOT NULL DEFAULT '',
-    ok         INTEGER,
-    fresh      INTEGER NOT NULL DEFAULT 0,
-    created_at REAL    NOT NULL,
+    ok          INTEGER,
+    fresh       INTEGER NOT NULL DEFAULT 0,
+    resume_from TEXT    NOT NULL DEFAULT '',
+    created_at  REAL    NOT NULL,
     leased_at  REAL,
     done_at    REAL
 );
@@ -48,7 +49,8 @@ CREATE TABLE IF NOT EXISTS notifications (
 -- Стартовое значение 1 -> самый первый промпт в базе идёт с чистого листа.
 CREATE TABLE IF NOT EXISTS session_state (
     id            INTEGER PRIMARY KEY CHECK (id = 1),
-    reset_pending INTEGER NOT NULL DEFAULT 1
+    reset_pending INTEGER NOT NULL DEFAULT 1,
+    resume_id     TEXT    NOT NULL DEFAULT ''
 );
 INSERT OR IGNORE INTO session_state (id, reset_pending) VALUES (1, 1);
 """
@@ -72,6 +74,15 @@ class DB:
             self._conn.execute(
                 "ALTER TABLE commands ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0"
             )
+        if "resume_from" not in cols:
+            self._conn.execute(
+                "ALTER TABLE commands ADD COLUMN resume_from TEXT NOT NULL DEFAULT ''"
+            )
+        st_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(session_state)")}
+        if "resume_id" not in st_cols:
+            self._conn.execute(
+                "ALTER TABLE session_state ADD COLUMN resume_id TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         self._conn.close()
@@ -80,19 +91,33 @@ class DB:
 
     def request_new_session(self) -> None:
         """Пометить, что следующий промпт стартует новую сессию Claude (/clear, /new)."""
-        self._conn.execute("UPDATE session_state SET reset_pending = 1 WHERE id = 1")
+        self._conn.execute(
+            "UPDATE session_state SET reset_pending = 1, resume_id = '' WHERE id = 1"
+        )
+        self._conn.commit()
+
+    def request_resume(self, session_id: str) -> None:
+        """Следующий промпт продолжит указанную сессию Claude через --resume --fork-session."""
+        self._conn.execute(
+            "UPDATE session_state SET reset_pending = 0, resume_id = ? WHERE id = 1",
+            (session_id,),
+        )
         self._conn.commit()
 
     def enqueue(self, prompt: str, chat_id: int) -> int:
         row = self._conn.execute(
-            "SELECT reset_pending FROM session_state WHERE id = 1"
+            "SELECT reset_pending, resume_id FROM session_state WHERE id = 1"
         ).fetchone()
         fresh = 1 if row and row["reset_pending"] else 0
+        resume_from = row["resume_id"] if row else ""
         cur = self._conn.execute(
-            "INSERT INTO commands (prompt, chat_id, fresh, created_at) VALUES (?, ?, ?, ?)",
-            (prompt, chat_id, fresh, time.time()),
+            "INSERT INTO commands (prompt, chat_id, fresh, resume_from, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (prompt, chat_id, fresh, resume_from, time.time()),
         )
-        self._conn.execute("UPDATE session_state SET reset_pending = 0 WHERE id = 1")
+        self._conn.execute(
+            "UPDATE session_state SET reset_pending = 0, resume_id = '' WHERE id = 1"
+        )
         self._conn.commit()
         return int(cur.lastrowid)
 
@@ -115,7 +140,7 @@ class DB:
             (now - LEASE_TTL,),
         )
         row = self._conn.execute(
-            "SELECT id, prompt, chat_id, fresh FROM commands "
+            "SELECT id, prompt, chat_id, fresh, resume_from FROM commands "
             "WHERE status='queued' ORDER BY id LIMIT 1"
         ).fetchone()
         if row is None:
@@ -127,7 +152,11 @@ class DB:
         )
         self._conn.commit()
         return CommandOut(
-            id=row["id"], prompt=row["prompt"], chat_id=row["chat_id"], fresh=bool(row["fresh"])
+            id=row["id"],
+            prompt=row["prompt"],
+            chat_id=row["chat_id"],
+            fresh=bool(row["fresh"]),
+            resume_from=row["resume_from"],
         )
 
     def finish(self, command_id: int, ok: bool, output: str) -> int | None:

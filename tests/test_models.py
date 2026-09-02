@@ -30,10 +30,17 @@ def test_result_defaults_empty_output():
     assert r.output == ""
 
 
-def test_command_out_defaults_fresh_false():
-    assert CommandOut(id=1, prompt="p", chat_id=2).fresh is False
+def test_command_out_defaults():
+    c = CommandOut(id=1, prompt="p", chat_id=2)
+    assert c.fresh is False and c.resume_from == ""
 
 
 def test_command_out_roundtrip():
-    c = CommandOut(id=3, prompt="p", chat_id=42, fresh=True)
-    assert c.model_dump() == {"id": 3, "prompt": "p", "chat_id": 42, "fresh": True}
+    c = CommandOut(id=3, prompt="p", chat_id=42, fresh=True, resume_from="sess-abc")
+    assert c.model_dump() == {
+        "id": 3,
+        "prompt": "p",
+        "chat_id": 42,
+        "fresh": True,
+        "resume_from": "sess-abc",
+    }

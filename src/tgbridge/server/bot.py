@@ -14,7 +14,7 @@ import logging
 import time
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import BotCommand, Message
 
 from ..db import DB
@@ -25,6 +25,7 @@ log = logging.getLogger("tgbridge.bot")
 COMMANDS: list[tuple[str, str]] = [
     ("new", "новая сессия — забыть контекст"),
     ("clear", "то же, что /new"),
+    ("resume", "продолжить сессию Claude по id (форк)"),
     ("history", "последние задачи"),
     ("id", "показать твой Telegram id"),
     ("ping", "проверка связи"),
@@ -36,6 +37,7 @@ START_TEXT = (
     "Пришли текст — он уйдёт в WSL как промпт для Claude Code.\n"
     "Каждый следующий промпт продолжает тот же разговор.\n"
     "/clear, /new — начать новую сессию (забыть контекст)\n"
+    "/resume <id> — продолжить конкретную сессию Claude (в новой ветке)\n"
     "/history — последние задачи\n"
     "/id — показать твой Telegram id\n"
     "/ping — проверка"
@@ -61,6 +63,20 @@ def new_session_reply(user_id: int, allowed_ids: set[int], db: DB) -> str:
         return "не в allowlist, игнорирую"
     db.request_new_session()
     return "🧹 контекст очищен — следующий промпт начнёт новую сессию"
+
+
+def resume_reply(user_id: int, allowed_ids: set[int], db: DB, session_id: str) -> str:
+    """/resume <id>: следующий промпт продолжит сессию <id> через --resume --fork-session."""
+    if user_id not in allowed_ids:
+        return "не в allowlist, игнорирую"
+    sid = (session_id or "").strip()
+    if not sid or " " in sid:
+        return "укажи id сессии: `/resume <session-id>`"
+    db.request_resume(sid)
+    return (
+        f"🔗 следующий промпт продолжит сессию `{sid}` в новой ветке "
+        "(исходная сессия не тронута)"
+    )
 
 
 def _clip_preview(text: str) -> str:
@@ -122,6 +138,13 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
     async def on_new_session(msg: Message, db: DB) -> None:
         uid = msg.from_user.id if msg.from_user else 0
         await msg.answer(new_session_reply(uid, allowed_ids, db))
+
+    @dp.message(Command("resume"))
+    async def on_resume(msg: Message, command: CommandObject, db: DB) -> None:
+        uid = msg.from_user.id if msg.from_user else 0
+        await msg.answer(
+            resume_reply(uid, allowed_ids, db, command.args or ""), parse_mode="Markdown"
+        )
 
     @dp.message(Command("history"))
     async def on_history(msg: Message, db: DB) -> None:

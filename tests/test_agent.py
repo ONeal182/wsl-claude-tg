@@ -92,6 +92,20 @@ async def test_run_prompt_not_fresh_continues_session(settings, monkeypatch):
     assert argv[-1] == "hi"
 
 
+async def test_run_prompt_resume_forks_session(settings, monkeypatch):
+    argv = _capture_argv(monkeypatch, FakeProc(b"ok", 0))
+    await main.run_prompt(settings, "hi", resume_from="sess-abc")
+    assert argv[argv.index("--resume") + 1] == "sess-abc"
+    assert "--fork-session" in argv and "--continue" not in argv
+    assert argv[-1] == "hi"
+
+
+async def test_run_prompt_resume_beats_fresh(settings, monkeypatch):
+    argv = _capture_argv(monkeypatch, FakeProc(b"ok", 0))
+    await main.run_prompt(settings, "hi", fresh=True, resume_from="sess-abc")
+    assert "--resume" in argv and "--fork-session" in argv
+
+
 async def test_run_prompt_timeout_kills(settings, monkeypatch):
     proc = FakeProc(b"", 0)
     _patch_exec(monkeypatch, proc)
@@ -118,13 +132,15 @@ async def test_handle_posts_result(settings, monkeypatch):
     assert url == "/commands/7/result" and kw["json"]["ok"] is True
 
 
-async def test_handle_forwards_fresh_flag_to_run_prompt(settings, monkeypatch):
+async def test_handle_forwards_session_flags_to_run_prompt(settings, monkeypatch):
     rp = AsyncMock(return_value=(True, "out"))
     monkeypatch.setattr(main, "run_prompt", rp)
     client = AsyncMock()
     client.post.return_value.raise_for_status = lambda: None
-    await main.handle(client, settings, CommandOut(id=7, prompt="p", chat_id=1, fresh=True))
-    assert rp.await_args.kwargs.get("fresh") is True or rp.await_args.args[2] is True
+    cmd = CommandOut(id=7, prompt="p", chat_id=1, fresh=True, resume_from="sess-abc")
+    await main.handle(client, settings, cmd)
+    assert rp.await_args.kwargs.get("fresh") is True
+    assert rp.await_args.kwargs.get("resume_from") == "sess-abc"
 
 
 async def test_handle_retries_then_succeeds(settings, monkeypatch):

@@ -24,14 +24,20 @@ log = logging.getLogger("tgbridge.agent")
 MAX_OUTPUT = 8000  # больше в Telegram всё равно не уедет
 
 
-async def run_prompt(cfg: Settings, prompt: str, fresh: bool = False) -> tuple[bool, str]:
+async def run_prompt(
+    cfg: Settings, prompt: str, fresh: bool = False, resume_from: str = ""
+) -> tuple[bool, str]:
     """Выполнить промпт через `claude -p` в headless-режиме.
 
+    `resume_from` (непусто) — `--resume <id> --fork-session`: продолжить конкретную
+        сессию, но в новой ветке (исходная не затрагивается). Перевешивает `fresh`.
     `fresh=True`  — начать новую сессию Claude (после /clear, /new или самый первый промпт).
     `fresh=False` — `--continue`: подхватить контекст предыдущего разговора в workdir.
     """
     argv = [cfg.claude_bin, "-p"]
-    if not fresh:
+    if resume_from:
+        argv += ["--resume", resume_from, "--fork-session"]
+    elif not fresh:
         argv.append("--continue")
     argv.append(prompt)
     try:
@@ -56,8 +62,11 @@ async def run_prompt(cfg: Settings, prompt: str, fresh: bool = False) -> tuple[b
 
 
 async def handle(client: httpx.AsyncClient, cfg: Settings, cmd: CommandOut) -> None:
-    log.info("задача #%s (fresh=%s): %s", cmd.id, cmd.fresh, cmd.prompt[:80])
-    ok, output = await run_prompt(cfg, cmd.prompt, fresh=cmd.fresh)
+    log.info(
+        "задача #%s (fresh=%s resume_from=%s): %s",
+        cmd.id, cmd.fresh, cmd.resume_from or "-", cmd.prompt[:80],
+    )
+    ok, output = await run_prompt(cfg, cmd.prompt, fresh=cmd.fresh, resume_from=cmd.resume_from)
     result = ResultIn(ok=ok, output=output)
     for attempt in range(5):
         try:
