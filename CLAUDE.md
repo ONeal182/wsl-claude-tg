@@ -22,11 +22,23 @@ uv run tgbridge-agent                # запуск агента (WSL)
 uv run tgnotify "текст" [-l warn]    # разовое уведомление (WSL)
 
 uv run pytest -q                     # все тесты
-uv run pytest tests/test_flow.py::test_queue_roundtrip   # один тест
+uv run pytest tests/test_db.py -q    # один модуль
+uv run pytest tests/test_server.py::test_queue_roundtrip   # один тест
 uv run ruff check --fix .            # линт
 ```
 
-Автозапуск — user-юниты systemd в `deploy/` (внутри файлов инструкции по установке; нужен `loginctl enable-linger $USER`).
+Развёртывание и автозапуск — **[deploy/DEPLOY.md](deploy/DEPLOY.md)** (VPS: `deploy/vps-setup.sh`; WSL: `deploy/wsl-setup.sh`).
+
+## Разработка через тесты (TDD)
+
+Правило: **никакого прод-кода без падающего теста впереди**. Цикл: красный → минимальная реализация → зелёный → весь `pytest` зелёный → коммит.
+
+`tests/` зеркалит `src/tgbridge/` помодульно: `test_config`, `test_db`, `test_models`,
+`test_auth`, `test_server`, `test_bot`, `test_agent`, `test_cli`. `tests/conftest.py`
+даёт фикстуры `settings` / `db` и автозачистку `TGBRIDGE_*` + `chdir` (тест не должен
+цеплять реальный `.env`). Логику, которую тяжело тестировать через фреймворк
+(обработка сообщений бота), выносим в чистые функции — их и покрываем; хендлеры
+aiogram / роуты FastAPI остаются тонкими.
 
 ## Архитектура
 
