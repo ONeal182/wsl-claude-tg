@@ -364,7 +364,13 @@ def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
     async def on_project_cb(cb: CallbackQuery, db: DB) -> None:
         uid = cb.from_user.id if cb.from_user else 0
         raw = (cb.data or "")[len(PROJECT_CB_PREFIX):]
-        await cb.answer(picked_project_reply(uid, allowed_ids, db, raw)[:200])
+        text = picked_project_reply(uid, allowed_ids, db, raw)
+        await cb.answer()  # подтвердить колбэк, иначе кнопка «крутится»
+        if cb.message is not None:
+            # отдельным сообщением — в нём ссылка на окружение кликабельна
+            await cb.message.answer(text)
+        else:
+            await cb.answer(text[:200])
 
     return dp
 

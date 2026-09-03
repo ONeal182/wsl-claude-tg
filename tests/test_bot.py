@@ -423,14 +423,21 @@ async def test_dispatcher_select_project_lists(bot, db: DB, monkeypatch):
     assert sent[0][1].inline_keyboard[0][0].callback_data.startswith("project:")
 
 
-async def test_dispatcher_project_button_selects(bot, db: DB, monkeypatch):
-    db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
+async def test_dispatcher_project_button_sends_env_link_as_message(bot, db: DB, monkeypatch):
+    db.sync_projects(
+        [("monorepo", "/home/oneal/monorepo", "https://claude.ai/code?environment=env_X")]
+    )
     pid = db.projects()[0]["id"]
-    toasts: list[str] = []
+    msgs: list[str] = []
+    acked: list[bool] = []
+
+    async def fake_msg_answer(self, text, **kw):  # noqa: ANN001
+        msgs.append(text)
 
     async def fake_cb_answer(self, text=None, **kw):  # noqa: ANN001
-        toasts.append(text or "")
+        acked.append(True)
 
+    monkeypatch.setattr("aiogram.types.Message.answer", fake_msg_answer)
     monkeypatch.setattr("aiogram.types.CallbackQuery.answer", fake_cb_answer)
     upd = {
         "update_id": 3,
@@ -448,9 +455,10 @@ async def test_dispatcher_project_button_selects(bot, db: DB, monkeypatch):
     }
     dp = build_dispatcher(ALLOWED)
     await dp.feed_raw_update(bot, upd, db=db, wake=asyncio.Event())
-    assert toasts and "tgbridge" in toasts[0]
+    assert acked  # колбэк подтверждён (иначе кнопка «висит»)
+    assert msgs and "https://claude.ai/code?environment=env_X" in msgs[0]
     db.enqueue("go", 1)
-    assert db.lease_next().cwd == "/home/oneal/tgbridge"
+    assert db.lease_next().cwd == "/home/oneal/monorepo"
 
 
 async def test_dispatcher_sessions_lists(bot, db: DB, answers):
