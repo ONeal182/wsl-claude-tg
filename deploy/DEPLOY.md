@@ -75,20 +75,25 @@ git pull
 bash deploy/wsl-setup.sh
 ```
 
-Скрипт: `uv sync` (нужен для `tgnotify`), правит
-`TGBRIDGE_SERVER_URL=http://127.0.0.1:8090` в `.env`, ставит `tgbridge-tunnel`
-и шаблон `claude-rc@.service`, затем включает `claude-rc@<project>` на каждый
-git-репозиторий первого уровня в `$HOME`, включает `linger` (стартуют с WSL).
+Скрипт: `uv sync` (нужен для `tgnotify`/`tgbridge-rcsync`), правит
+`TGBRIDGE_SERVER_URL=http://127.0.0.1:8090` в `.env`, ставит `tgbridge-tunnel`,
+шаблон `claude-rc@.service` и `tgbridge-rcsync.timer`, включает `claude-rc@<project>`
+на каждый git-репозиторий первого уровня в `$HOME`, включает `linger`.
 
 Каждый инстанс держит `claude remote-control --spawn worktree` из
 `WorkingDirectory=%h/<project>`: новая сессия с claude.ai получает свой
 git-worktree этого репозитория. Добавить проект позже:
 `systemctl --user enable --now claude-rc@<dir>` (где `~/<dir>/.git` существует).
 
+`tgbridge-rcsync.timer` (при загрузке + раз в 5 мин) тянет ссылку на окружение
+каждого `claude-rc@<p>` из journalctl и шлёт на `POST /projects` — бот в
+`/select_project` отдаёт эту ссылку по выбору проекта.
+
 Проверка:
 
 ```bash
 systemctl --user status tgbridge-tunnel 'claude-rc@*'
+systemctl --user list-timers tgbridge-rcsync.timer
 journalctl --user -u claude-rc@<project> -n 30   # тут URL окружения/сессии
 curl -s http://127.0.0.1:8090/healthz            # {"ok":true} — туннель жив (для tgnotify)
 ```

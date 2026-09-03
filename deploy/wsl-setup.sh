@@ -32,11 +32,13 @@ claude auth status 2>/dev/null | grep -q '"authMethod": "claude.ai"' \
 
 # --- systemd user units ---
 mkdir -p ~/.config/systemd/user
-cp deploy/tgbridge-tunnel.service 'deploy/claude-rc@.service' ~/.config/systemd/user/
+cp deploy/tgbridge-tunnel.service 'deploy/claude-rc@.service' \
+   deploy/tgbridge-rcsync.service deploy/tgbridge-rcsync.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 loginctl enable-linger "$USER" 2>/dev/null || true
 
 systemctl --user enable --now tgbridge-tunnel.service
+systemctl --user enable --now tgbridge-rcsync.timer
 sleep 3
 
 # по инстансу claude-rc на каждый git-репозиторий первого уровня в $HOME
@@ -51,10 +53,11 @@ else
   for p in "${projects[@]}"; do
     systemctl --user enable --now "claude-rc@$p.service"
   done
-  sleep 3
+  sleep 5
   for p in "${projects[@]}"; do
     echo "--- claude-rc@$p: $(systemctl --user is-active "claude-rc@$p") ---"
   done
+  systemctl --user start tgbridge-rcsync.service   # первый пуш окружений на VPS
 fi
 
 echo "--- tunnel: $(systemctl --user is-active tgbridge-tunnel) ---"

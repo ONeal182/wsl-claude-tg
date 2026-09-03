@@ -203,6 +203,20 @@ def test_picked_project_reply_selects_project(db: DB):
     assert got.cwd == "/home/oneal/tgbridge" and got.fresh is True
 
 
+def test_picked_project_reply_gives_env_link_when_present(db: DB):
+    db.sync_projects(
+        [("monorepo", "/home/oneal/monorepo", "https://claude.ai/code?environment=env_X")]
+    )
+    out = picked_project_reply(466404679, ALLOWED, db, str(db.projects()[0]["id"]))
+    assert "https://claude.ai/code?environment=env_X" in out and "monorepo" in out
+
+
+def test_picked_project_reply_without_env_url_points_at_server(db: DB):
+    db.sync_projects([("blog", "/home/oneal/blog")])
+    out = picked_project_reply(466404679, ALLOWED, db, str(db.projects()[0]["id"]))
+    assert "claude-rc@blog" in out
+
+
 def test_picked_project_reply_unknown_id(db: DB):
     out = picked_project_reply(466404679, ALLOWED, db, "999")
     assert "не найд" in out.lower()

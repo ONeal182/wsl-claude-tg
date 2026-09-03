@@ -278,6 +278,24 @@ def test_projects_respects_limit(db: DB):
     assert len(db.projects(limit=3)) == 3
 
 
+def test_sync_projects_stores_and_refreshes_env_url(db: DB):
+    db.sync_projects([("monorepo", "/home/oneal/monorepo", "url-A")])
+    assert db.projects()[0]["env_url"] == "url-A"
+    db.sync_projects([("monorepo", "/home/oneal/monorepo", "url-B")])  # тот же путь
+    assert db.projects()[0]["env_url"] == "url-B"
+
+
+def test_sync_projects_two_tuple_leaves_env_url_empty(db: DB):
+    db.sync_projects([("blog", "/home/oneal/blog")])
+    assert db.projects()[0]["env_url"] == ""
+
+
+def test_select_project_row_carries_env_url(db: DB):
+    db.sync_projects([("monorepo", "/home/oneal/monorepo", "url-A")])
+    row = db.select_project(db.projects()[0]["id"])
+    assert row["env_url"] == "url-A"
+
+
 def test_select_project_returns_row_and_marks_next_fresh(db: DB):
     db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])
     pid = db.projects()[0]["id"]

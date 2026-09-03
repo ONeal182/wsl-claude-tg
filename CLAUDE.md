@@ -11,14 +11,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > в `$HOME` (`deploy/claude-rc@.service`): `claude remote-control` (server mode,
 > `--spawn worktree`) с `WorkingDirectory=%h/%i`. На claude.ai/code проекты видны
 > отдельными окружениями, новая сессия = git-worktree выбранного проекта; код и
-> файлы остаются на домашнем ПК. Python-агент long-poll (`src/tgbridge/agent`, точка входа
-> `tgbridge-agent`) и разбор очереди ботом — **legacy**: код в дереве и тестах
-> остаётся, из деплоя убран. `prompt_reply()` в очередь больше **не ставит** —
-> отвечает `BRIDGE_DISABLED_TEXT` (ссылка на claude.ai/code); команды сессий
-> (`/select_project`, `/new`, `/resume`, `/clear`) остались, но инертны — взводят
-> `session_state`, который никто не читает. `/sessions`, `/history` — read-only
-> журнал прошлых прогонов. Ниже описан мост целиком — как он в коде; активная
-> часть сейчас — только исходящая (`/notify`) + Remote Control.
+> файлы остаются на домашнем ПК. `tgbridge-rcsync` (таймер systemd в WSL,
+> `deploy/tgbridge-rcsync.*`) вытаскивает ссылку `claude.ai/code?environment=…`
+> из journalctl каждого `claude-rc@<p>` и шлёт её в `projects.env_url` на
+> `POST /projects`; в боте `/select_project` → выбор проекта → `picked_project_reply()`
+> отдаёт эту ссылку («открой окружение → New session»).
+>
+> Python-агент long-poll (`src/tgbridge/agent`, точка входа `tgbridge-agent`) и
+> разбор очереди ботом — **legacy**: код в дереве и тестах остаётся, из деплоя
+> убран. `prompt_reply()` в очередь больше **не ставит** — отвечает
+> `BRIDGE_DISABLED_TEXT` (ссылка на claude.ai/code); `/new`, `/resume`, `/clear`
+> остались, но инертны (взводят `session_state`, который никто не читает).
+> `/sessions`, `/history` — read-only журнал прошлых прогонов. Ниже описан мост
+> целиком — как он в коде; активная часть сейчас — исходящая (`/notify`) +
+> Remote Control + `/select_project` как дип-линк.
 
 Потоки:
 
@@ -43,6 +49,7 @@ uv sync --extra dev                  # WSL: агенту хватает httpx и
 uv run tgbridge-server               # запуск сервера (VPS)
 uv run tgbridge-agent                # legacy long-poll агент (WSL); в деплое — claude remote-control
 uv run tgnotify "текст" [-l warn] [--session <id>]   # разовое уведомление (WSL)
+uv run tgbridge-rcsync               # разовый пуш окружений claude-rc@<p> на VPS (WSL; обычно по таймеру)
 
 uv run pytest -q                     # все тесты
 uv run pytest tests/test_db.py -q    # один модуль
@@ -71,12 +78,13 @@ aiogram / роуты FastAPI остаются тонкими.
 |---|---|
 | `config.py` | единый `Settings` (pydantic-settings, префикс `TGBRIDGE_`, читает `.env`). Каждая точка входа берёт только свою часть полей; `allowed_ids` парсит csv в `set[int]` |
 | `models.py` | pydantic-схемы тела HTTP API — общий контракт между агентом и сервером |
-| `db.py` | `DB` — SQLite-очередь. Таблица `commands` как конечный автомат: `queued → leased → done`. `lease_next()` сначала возвращает в очередь protухшие `leased` (старше `LEASE_TTL`), потом атомарно забирает одну задачу. Таблица `session_state` (одна строка) — `reset_pending` + `resume_id` + `project_id`: `enqueue()` штампует ими `commands.fresh` / `commands.resume_from` / `commands.cwd`, гасит `reset_pending`/`resume_id`, а `project_id` оставляет (проект залипает); `request_new_session()` взводит `reset_pending` (и чистит `resume_id`), `request_resume(id)` — наоборот, `select_project(id)` — ставит `project_id` + `reset_pending=1`. Таблица `sessions` — журнал сессий Claude: `finish()` при непустом `session_id` зовёт `record_session()` (upsert, title = первый промпт, дальше только `turns`/`last_result`; `project_id` из `_ensure_project(commands.cwd)`); `sessions(limit)` (LEFT JOIN `projects` → `project_name`) для `/sessions`, `latest_session_id()` для `/new` (форк последней). Таблица `projects` (`name`, `path` UNIQUE): `sync_projects(items)` — upsert от агентского скана, `_ensure_project(path)` — ленивая вставка из `finish()`, `projects(limit)` для `/select_project`. `history(limit)` — последние задачи. `_migrate()` донакатывает новые колонки на старые базы. Операции синхронные — база локальная |
+| `db.py` | `DB` — SQLite-очередь. Таблица `commands` как конечный автомат: `queued → leased → done`. `lease_next()` сначала возвращает в очередь protухшие `leased` (старше `LEASE_TTL`), потом атомарно забирает одну задачу. Таблица `session_state` (одна строка) — `reset_pending` + `resume_id` + `project_id`: `enqueue()` штампует ими `commands.fresh` / `commands.resume_from` / `commands.cwd`, гасит `reset_pending`/`resume_id`, а `project_id` оставляет (проект залипает); `request_new_session()` взводит `reset_pending` (и чистит `resume_id`), `request_resume(id)` — наоборот, `select_project(id)` — ставит `project_id` + `reset_pending=1`. Таблица `sessions` — журнал сессий Claude: `finish()` при непустом `session_id` зовёт `record_session()` (upsert, title = первый промпт, дальше только `turns`/`last_result`; `project_id` из `_ensure_project(commands.cwd)`); `sessions(limit)` (LEFT JOIN `projects` → `project_name`) для `/sessions`, `latest_session_id()` для `/new` (форк последней). Таблица `projects` (`name`, `path` UNIQUE, `env_url`): `sync_projects(items)` — принимает `(name, path[, env_url])`, INSERT OR IGNORE по `path` + рефреш непустого `env_url` (сервер `claude-rc@<p>` перезапустился); `_ensure_project(path)` — ленивая вставка из `finish()`; `projects(limit)` / `select_project(id)` возвращают и `env_url` (его отдаёт `picked_project_reply`). `history(limit)` — последние задачи. `_migrate()` донакатывает новые колонки на старые базы. Операции синхронные — база локальная |
 | `server/app.py` | FastAPI. Бот запускается фоновой задачей в `lifespan`, объекты (`db`, `wake`, `bot`) висят на `app.state`. `/commands/next` — самодельный long-poll: цикл `lease_next()` + ожидание `asyncio.Event` (`wake`) до дедлайна, иначе `204`. `POST /projects` — `db.sync_projects()` от агента. Отправка в Telegram — `send_md()`: GFM → MarkdownV2 + разбивка на сообщения |
-| `server/bot.py` | aiogram 3. `build_dispatcher(allowed_ids)` собирает хендлеры; `db` и `wake` прокидываются как kwargs в `start_polling` и приходят в хендлеры аргументами. Любой текст не-из-allowlist отклоняется; принятый — `db.enqueue()` + `wake.set()`. `/clear` → `db.request_new_session()` (чистый старт); `/new` → `db.request_resume(db.latest_session_id())` — форк последней сессии (пустой журнал → фолбэк на `request_new_session()`); `/resume <id>` → `db.request_resume(id)`; `/select_project` → `select_project_reply()` рисует кнопки `project:<id>` из `db.projects()`, колбэк → `picked_project_reply()` → `db.select_project(id)`; `/sessions` → `db.sessions()`; `/history` → `db.history()`. Ответы — чистые функции `*_reply()` (у `select_project_reply` — `(text, keyboard)`). `run_bot()` при старте регистрирует меню-кнопку через `set_my_commands(bot_commands())` (список `COMMANDS`). Имя команды — только `[a-z0-9_]` (Telegram), поэтому `/select_project`, не `/select-project` |
+| `server/bot.py` | aiogram 3. `build_dispatcher(allowed_ids)` собирает хендлеры; `db` и `wake` прокидываются как kwargs в `start_polling` и приходят в хендлеры аргументами. Любой текст не-из-allowlist отклоняется; принятый — `db.enqueue()` + `wake.set()`. `/clear` → `db.request_new_session()` (чистый старт); `/new` → `db.request_resume(db.latest_session_id())` — форк последней сессии (пустой журнал → фолбэк на `request_new_session()`); `/resume <id>` → `db.request_resume(id)`; `/select_project` → `select_project_reply()` рисует кнопки `project:<id>` из `db.projects()`, колбэк → `picked_project_reply()` → `db.select_project(id)` и отдаёт `env_url` проекта («открой окружение → New session») либо подсказку, что `claude-rc@<p>` не поднят; `/sessions` → `db.sessions()`; `/history` → `db.history()`. Ответы — чистые функции `*_reply()` (у `select_project_reply` — `(text, keyboard)`). `run_bot()` при старте регистрирует меню-кнопку через `set_my_commands(bot_commands())` (список `COMMANDS`). Имя команды — только `[a-z0-9_]` (Telegram), поэтому `/select_project`, не `/select-project` |
 | `server/auth.py` | зависимость FastAPI: `Authorization: Bearer <TGBRIDGE_TOKEN>`, сравнение через `secrets.compare_digest` |
 | `agent/main.py` | **legacy** (в деплое заменён на `claude remote-control` — см. врезку в «Что это»). Бесконечный цикл long-poll к VPS с экспоненциальным backoff при обрыве. `run_prompt(cfg, prompt, fresh, resume_from, cwd) -> (ok, вывод, session_id)` запускает `claude -p --output-format json` в `cwd or cfg.workdir`: `resume_from` → `--resume <id> --fork-session` (перевешивает `fresh`), иначе `fresh` → чистый старт, иначе `--continue`. `_parse_output()` берёт `.result` / `.session_id` / `.is_error` из json, при нераспознанном json — сырой текст без id. Результат (+`session_id`) отдаётся серверу с ретраями. `scan_projects(root)` — не-скрытые папки первого уровня; `push_projects()` шлёт их на `POST /projects` при старте и раз в `PROJECTS_SYNC_EVERY`. Код и `test_agent` в дереве остаются — контракт `models.py` не ломаем |
 | `cli/notify.py` | тонкий `httpx.post` на `/notify`, `-` в аргументе = читать stdin; `--session <id>` кладёт `session_id` в тело (сервер вешает кнопку резюма) |
+| `cli/rcsync.py` | `tgbridge-rcsync`: `collect(home)` — по каждому юниту `claude-rc@<name>` (`systemctl list-units`) тянет последнюю `claude.ai/code?environment=…` из `journalctl -o cat` (`env_url_from_journal` / `instances_from_units` — чистые), шлёт `[{name, path, env_url}]` на `POST /projects`. Гоняется таймером systemd в WSL |
 
 ### Ключевые инварианты
 

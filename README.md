@@ -6,7 +6,9 @@
 - **Промпты внутрь:** заменено на Claude Code **Remote Control** — в WSL по инстансу
   `claude-rc@<project>` (`claude remote-control --spawn worktree`) на каждый
   git-репозиторий в `$HOME`; на claude.ai/code проекты видны окружениями, новая
-  сессия = git-worktree проекта. Прежний путь «бот → VPS-очередь → агент → `claude -p`»
+  сессия = git-worktree проекта. `tgbridge-rcsync` (таймер systemd) шлёт ссылки
+  на окружения в бот, `/select_project` → выбор проекта отдаёт дип-линк на его
+  окружение. Прежний путь «бот → VPS-очередь → агент → `claude -p`»
   (`src/tgbridge/agent/`) — legacy, из деплоя убран; код и тесты в дереве остаются.
 
 Домашняя машина делает только исходящие запросы — белый IP и проброс портов не нужны.

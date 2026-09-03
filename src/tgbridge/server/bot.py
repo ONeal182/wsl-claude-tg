@@ -153,8 +153,8 @@ def select_project_reply(
     rows = db.projects()
     if not rows:
         return (
-            "список проектов пуст — агент ещё не прислал скан "
-            "(проверь TGBRIDGE_PROJECTS_ROOT в WSL)",
+            "список проектов пуст — `tgbridge-rcsync` в WSL ещё не прислал окружения "
+            "(проверь `systemctl --user list-units 'claude-rc@*'`)",
             None,
         )
     return "📂 выбери проект для новой сессии:", projects_keyboard(rows)
@@ -173,9 +173,15 @@ def picked_project_reply(
     row = db.select_project(project_id)
     if row is None:
         return "проект не найден"
+    if row["env_url"]:
+        return (
+            f"📂 `{row['name']}` — открой окружение и жми **New session** "
+            f"(worktree `{row['path']}`):\n{row['env_url']}"
+        )
     return (
-        f"📂 проект `{row['name']}` выбран — следующий промпт стартует "
-        f"новую сессию в `{row['path']}`"
+        f"📂 `{row['name']}` выбран, но сервер `claude-rc@{row['name']}` в WSL "
+        f"не поднят или ещё не прислал ссылку на окружение — проверь "
+        f"`systemctl --user status claude-rc@{row['name']}`"
     )
 
 

@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS projects (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT    NOT NULL,
     path       TEXT    NOT NULL UNIQUE,
+    env_url    TEXT    NOT NULL DEFAULT '',  -- claude.ai/code?environment=... от claude-rc@<name>
     created_at REAL    NOT NULL
 );
 """
@@ -117,6 +118,11 @@ class DB:
         se_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(sessions)")}
         if "project_id" not in se_cols:
             self._conn.execute("ALTER TABLE sessions ADD COLUMN project_id INTEGER")
+        pr_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(projects)")}
+        if "env_url" not in pr_cols:
+            self._conn.execute(
+                "ALTER TABLE projects ADD COLUMN env_url TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         self._conn.close()
@@ -145,7 +151,7 @@ class DB:
         другой. reset_pending взводится (чистый старт в новом проекте), resume_id гасится.
         """
         row = self._conn.execute(
-            "SELECT id, name, path FROM projects WHERE id = ?", (project_id,)
+            "SELECT id, name, path, env_url FROM projects WHERE id = ?", (project_id,)
         ).fetchone()
         if row is None:
             return None
@@ -300,16 +306,27 @@ class DB:
 
     # --- проекты --------------------------------------------------------
 
-    def sync_projects(self, items: list[tuple[str, str]]) -> int:
-        """Заапсертить список проектов (name, path). Вернуть, сколько добавлено новых."""
+    def sync_projects(self, items: list[tuple[str, ...]]) -> int:
+        """Заапсертить проекты `(name, path[, env_url])`. Вернуть число новых.
+
+        Путь — ключ. Для уже известного проекта непустой `env_url` обновляется
+        (сервер claude-rc@<name> перезапустился — новое окружение).
+        """
         now = time.time()
         added = 0
-        for name, path in items:
+        for it in items:
+            name, path = it[0], it[1]
+            env_url = it[2] if len(it) > 2 else ""
             cur = self._conn.execute(
-                "INSERT OR IGNORE INTO projects (name, path, created_at) VALUES (?, ?, ?)",
-                (name, path, now),
+                "INSERT OR IGNORE INTO projects (name, path, env_url, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (name, path, env_url, now),
             )
             added += cur.rowcount
+            if env_url:
+                self._conn.execute(
+                    "UPDATE projects SET env_url = ? WHERE path = ?", (env_url, path)
+                )
         self._conn.commit()
         return added
 
@@ -317,7 +334,7 @@ class DB:
         """Проекты для /select-project, по алфавиту."""
         return list(
             self._conn.execute(
-                "SELECT id, name, path FROM projects ORDER BY name LIMIT ?",
+                "SELECT id, name, path, env_url FROM projects ORDER BY name LIMIT ?",
                 (max(1, limit),),
             )
         )

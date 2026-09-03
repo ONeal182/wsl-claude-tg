@@ -32,10 +32,15 @@ class CommandOut(BaseModel):
 
 
 class ProjectItem(BaseModel):
-    """Один проект: имя папки + абсолютный путь к ней в WSL."""
+    """Один проект: имя папки + абсолютный путь к ней в WSL.
+
+    `env_url` — ссылка `claude.ai/code?environment=...` сервера `claude-rc@<name>`
+    (WSL шлёт её, когда remote-control поднят); пусто, если сервера нет.
+    """
 
     name: str = Field(min_length=1, max_length=200)
     path: str = Field(min_length=1, max_length=2000)
+    env_url: str = Field(default="", max_length=500)
 
 
 class ProjectsIn(BaseModel):

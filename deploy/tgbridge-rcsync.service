@@ -1,0 +1,13 @@
+# WSL — oneshot: собрать окружения claude-rc@<project> и синхронизировать на VPS.
+# Гоняется по таймеру (tgbridge-rcsync.timer). Ставится deploy/wsl-setup.sh.
+[Unit]
+Description=sync claude-rc@<project> environments to tgbridge VPS (for /select_project)
+After=network-online.target tgbridge-tunnel.service
+Wants=tgbridge-tunnel.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/tgbridge
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=%h/tgbridge/.env
+ExecStart=%h/tgbridge/.venv/bin/tgbridge-rcsync

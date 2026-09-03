@@ -1,0 +1,11 @@
+# WSL — таймер для tgbridge-rcsync.service: при загрузке и раз в 5 минут.
+[Unit]
+Description=periodic sync of claude-rc@<project> environments to tgbridge VPS
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

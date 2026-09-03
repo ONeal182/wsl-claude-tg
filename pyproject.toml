@@ -30,6 +30,7 @@ dev = [
 tgbridge-server = "tgbridge.server.app:main"
 tgbridge-agent = "tgbridge.agent.main:main"
 tgnotify = "tgbridge.cli.notify:main"
+tgbridge-rcsync = "tgbridge.cli.rcsync:main"
 
 [build-system]
 requires = ["hatchling"]

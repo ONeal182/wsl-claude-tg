@@ -89,6 +89,18 @@ def test_projects_endpoint_syncs_into_table(client):
     assert names == ["blog", "tgbridge"]
 
 
+def test_projects_endpoint_stores_env_url(client):
+    r = client.post(
+        "/projects",
+        json={"projects": [
+            {"name": "monorepo", "path": "/home/oneal/monorepo", "env_url": "env-A"},
+        ]},
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    assert client._app.state.db.projects()[0]["env_url"] == "env-A"
+
+
 def test_commands_next_carries_cwd(client):
     db = client._app.state.db
     db.sync_projects([("tgbridge", "/home/oneal/tgbridge")])

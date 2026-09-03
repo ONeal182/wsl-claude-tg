@@ -77,3 +77,12 @@ def test_project_item_rejects_empty_fields():
         ProjectItem(name="", path="/x")
     with pytest.raises(ValidationError):
         ProjectItem(name="x", path="")
+
+
+def test_project_item_env_url_defaults_empty():
+    assert ProjectItem(name="x", path="/x").env_url == ""
+
+
+def test_project_item_carries_env_url():
+    p = ProjectItem(name="x", path="/x", env_url="https://claude.ai/code?environment=env_1")
+    assert p.model_dump()["env_url"] == "https://claude.ai/code?environment=env_1"

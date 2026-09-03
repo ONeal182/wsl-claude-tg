@@ -109,7 +109,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/projects", dependencies=[auth])
     async def projects_sync(body: ProjectsIn) -> dict[str, int]:
         db: DB = app.state.db
-        added = db.sync_projects([(p.name, p.path) for p in body.projects])
+        added = db.sync_projects([(p.name, p.path, p.env_url) for p in body.projects])
         return {"added": added}
 
     @app.get("/commands/next", dependencies=[auth])
