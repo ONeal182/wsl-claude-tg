@@ -11,9 +11,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > управляются с claude.ai/code и из приложения Claude, код и файлы остаются на
 > домашнем ПК. Python-агент long-poll (`src/tgbridge/agent`, точка входа
 > `tgbridge-agent`) и разбор очереди ботом — **legacy**: код в дереве и тестах
-> остаётся, из деплоя убран. Команды бота `/select_project`, `/sessions`,
-> `/history`, `/new`, `/resume`, `/clear` неактивны, пока очередь никто не разбирает.
-> Ниже описан мост целиком — как он в коде; активная часть сейчас — только исходящая.
+> остаётся, из деплоя убран. `prompt_reply()` в очередь больше **не ставит** —
+> отвечает `BRIDGE_DISABLED_TEXT` (ссылка на claude.ai/code); команды сессий
+> (`/select_project`, `/new`, `/resume`, `/clear`) остались, но инертны — взводят
+> `session_state`, который никто не читает. `/sessions`, `/history` — read-only
+> журнал прошлых прогонов. Ниже описан мост целиком — как он в коде; активная
+> часть сейчас — только исходящая (`/notify`) + Remote Control.
 
 Потоки:
 

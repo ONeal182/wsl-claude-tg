@@ -40,13 +40,14 @@ def test_id_reply_not_allowed():
     assert "НЕТ" in id_reply(999, ALLOWED)
 
 
-def test_prompt_reply_enqueues_and_wakes(db: DB):
+def test_prompt_reply_points_to_web_and_does_not_enqueue(db: DB):
+    """Мост в режиме remote-control: промпт боту не ставится в очередь,
+    в ответ — подсказка открыть claude.ai/code."""
     wake = asyncio.Event()
     reply = prompt_reply("почини баг", 466404679, 555, ALLOWED, db, wake)
-    assert reply == "⏳ принято, задача #1"
-    assert wake.is_set()
-    got = db.lease_next()
-    assert (got.prompt, got.chat_id) == ("почини баг", 555)
+    assert "claude.ai/code" in reply
+    assert not wake.is_set()
+    assert db.lease_next() is None
 
 
 def test_prompt_reply_rejects_stranger(db: DB):
@@ -334,13 +335,13 @@ async def test_dispatcher_ping(bot, db: DB, answers):
     assert answers == ["pong"]
 
 
-async def test_dispatcher_text_from_allowed_enqueues(bot, db: DB, answers):
+async def test_dispatcher_text_from_allowed_points_to_web(bot, db: DB, answers):
     dp = build_dispatcher(ALLOWED)
     wake = asyncio.Event()
     await dp.feed_raw_update(bot, _raw("сделай отчёт", 466404679), db=db, wake=wake)
-    assert answers and "принято" in answers[0]
-    assert wake.is_set()
-    assert db.lease_next().prompt == "сделай отчёт"
+    assert answers and "claude.ai/code" in answers[0]
+    assert not wake.is_set()
+    assert db.lease_next() is None
 
 
 async def test_dispatcher_text_from_stranger_rejected(bot, db: DB, answers):

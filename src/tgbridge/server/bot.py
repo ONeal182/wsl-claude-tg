@@ -1,7 +1,10 @@
-"""Telegram-бот на aiogram: long-poll к Telegram, приём промптов, allowlist.
+"""Telegram-бот на aiogram: long-poll к Telegram, allowlist.
 
 Живёт в одном процессе с FastAPI (запускается как фоновая задача в lifespan).
-Любое текстовое сообщение от разрешённого пользователя кладётся в очередь как задача.
+После перехода WSL на `claude remote-control` приём промптов отключён:
+`prompt_reply()` отвечает `BRIDGE_DISABLED_TEXT` и в очередь ничего не кладёт,
+команды сессий (`/select_project`, `/new`, `/resume`, `/clear`) инертны. Активен
+только исходящий путь (`/notify` в `app.py` шлёт через объект бота).
 
 Логика ответов вынесена в чистые функции (`*_reply`) — их и покрываем тестами;
 хендлеры aiogram остаются тонкими обёртками.
@@ -54,6 +57,11 @@ START_TEXT = (
     "/id — показать твой Telegram id\n"
     "/ping — проверка"
 )
+
+# WSL перешёл на `claude remote-control` — приём промптов через мост отключён:
+# `prompt_reply()` отвечает этим и в очередь ничего не кладёт. Команды сессий
+# (`/clear`, `/new`, `/resume`, `/select_project`) пока оставлены как есть —
+# взводят `session_state`, который в режиме remote-control никто не читает.
 
 HISTORY_LIMIT = 15
 SESSIONS_LIMIT = 15
@@ -265,16 +273,25 @@ def history_reply(user_id: int, allowed_ids: set[int], db: DB, limit: int = HIST
     return "\n".join(lines)
 
 
+BRIDGE_DISABLED_TEXT = (
+    "🛑 приём промптов через мост отключён — WSL работает в режиме "
+    "`claude remote-control`.\n"
+    "Открой вкладку Code в приложении Claude или https://claude.ai/code — "
+    "сессия `wsl-home` там, продолжай её или создавай новые оттуда."
+)
+
+
 def prompt_reply(
     text: str, user_id: int, chat_id: int, allowed_ids: set[int], db: DB, wake: asyncio.Event
 ) -> str:
-    """Обработать входящий текст: allowlist -> очередь -> разбудить long-poll агента."""
+    """Мост в режиме remote-control: промпт в очередь не ставим, шлём подсказку на веб.
+
+    `db` / `wake` в сигнатуре ради стабильности вызова из хендлера — не используются.
+    """
     if user_id not in allowed_ids:
         log.warning("отклонён промпт от чужого id=%s", user_id)
         return "не в allowlist, игнорирую"
-    cmd_id = db.enqueue(prompt=text, chat_id=chat_id)
-    wake.set()
-    return f"⏳ принято, задача #{cmd_id}"
+    return BRIDGE_DISABLED_TEXT
 
 
 def build_dispatcher(allowed_ids: set[int]) -> Dispatcher:
