@@ -1,8 +1,8 @@
 # Деплой
 
 ```
-claude.ai/code / приложение Claude  ◄──►  claude remote-control  (WSL, дом)
-                                                 (tgbridge-agent.service)
+claude.ai/code / приложение Claude  ◄──►  claude-rc@<project>  (WSL, дом)
+                                          claude remote-control --spawn worktree
 
 Telegram  ◄─── /notify ───  VPS: tgbridge-server (127.0.0.1:8090)
                                      ▲
@@ -11,10 +11,12 @@ Telegram  ◄─── /notify ───  VPS: tgbridge-server (127.0.0.1:8090)
 WSL (дом):  tgnotify / Stop-хук ─────┘
 ```
 
-**Входящий поток теперь через Remote Control**, а не через бота: `tgbridge-agent.service`
-держит `claude remote-control` (server mode), сессии видны и управляются с
-claude.ai/code и из приложения Claude. Python-агент long-poll
-(`src/tgbridge/agent`) — legacy, из деплоя убран (см. корневой CLAUDE.md).
+**Входящий поток теперь через Remote Control**, а не через бота: по инстансу
+шаблонного юнита `claude-rc@<project>` на каждый git-репозиторий первого уровня
+в `$HOME` (`deploy/claude-rc@.service`) держит `claude remote-control` (server
+mode, `--spawn worktree`). На claude.ai/code проекты — отдельные окружения,
+новая сессия = git-worktree проекта. Python-агент long-poll (`src/tgbridge/agent`)
+— legacy, из деплоя убран (см. корневой CLAUDE.md).
 
 Осталось от моста: **исходящие** уведомления — `tgnotify` и Stop-хук шлют на
 `POST /notify` через SSH-туннель. Сервер на VPS наружу **не открыт** (только
@@ -74,27 +76,26 @@ bash deploy/wsl-setup.sh
 ```
 
 Скрипт: `uv sync` (нужен для `tgnotify`), правит
-`TGBRIDGE_SERVER_URL=http://127.0.0.1:8090` в `.env`, ставит и запускает два
-user-юнита — `tgbridge-tunnel` и `tgbridge-agent` (= `claude remote-control`
-в server mode), включает `linger` (стартуют вместе с WSL).
+`TGBRIDGE_SERVER_URL=http://127.0.0.1:8090` в `.env`, ставит `tgbridge-tunnel`
+и шаблон `claude-rc@.service`, затем включает `claude-rc@<project>` на каждый
+git-репозиторий первого уровня в `$HOME`, включает `linger` (стартуют с WSL).
 
-`tgbridge-agent` работает из `WorkingDirectory=%h` (`/home/oneal`): все сессии,
-созданные с claude.ai, стартуют в этом cwd. Поменять — `WorkingDirectory=` в
-`~/.config/systemd/user/tgbridge-agent.service` + `systemctl --user daemon-reload`.
-`--spawn worktree` (в `ExecStart`) даёт каждой сессии свой git-worktree, если
-cwd — репозиторий.
+Каждый инстанс держит `claude remote-control --spawn worktree` из
+`WorkingDirectory=%h/<project>`: новая сессия с claude.ai получает свой
+git-worktree этого репозитория. Добавить проект позже:
+`systemctl --user enable --now claude-rc@<dir>` (где `~/<dir>/.git` существует).
 
 Проверка:
 
 ```bash
-systemctl --user status tgbridge-tunnel tgbridge-agent
-journalctl --user -u tgbridge-agent -n 30    # тут URL сессии wsl-home
-curl -s http://127.0.0.1:8090/healthz        # {"ok":true} — туннель жив (для tgnotify)
+systemctl --user status tgbridge-tunnel 'claude-rc@*'
+journalctl --user -u claude-rc@<project> -n 30   # тут URL окружения/сессии
+curl -s http://127.0.0.1:8090/healthz            # {"ok":true} — туннель жив (для tgnotify)
 ```
 
-Сессия `wsl-home` должна появиться в списке на claude.ai/code и во вкладке Code
-приложения Claude. Оттуда её продолжаешь / создаёшь новые — код и файлы на
-домашнем ПК, рулёжка с телефона или браузера.
+Проекты должны появиться отдельными окружениями на claude.ai/code (и во вкладке
+Code приложения Claude). Новая сессия под окружением проекта = изолированный
+git-worktree; код и файлы на домашнем ПК, рулёжка с телефона или браузера.
 
 ### Stop-хук: результат интерактивной сессии в Telegram (опционально)
 
@@ -122,8 +123,8 @@ systemd-юнит с `EnvironmentFile`, экспортни переменную �
 
 ## 3. Проверка сквозняка
 
-Открой claude.ai/code (или вкладку Code в приложении Claude) → сессия `wsl-home`
-на месте, отправь в неё сообщение → ответ приходит, файлы/команды идут на домашнем ПК.
+Открой claude.ai/code (или вкладку Code в приложении Claude) → окружения проектов
+на месте, создай сессию под нужным → она в git-worktree проекта на домашнем ПК.
 
 `tgnotify "тест"` из WSL → сообщение в Telegram.
 `tgnotify --session test-id "тест"` → сообщение с кнопкой «▶️ Перейти к сессии»

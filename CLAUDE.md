@@ -6,10 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Мост `WSL (домашний ПК) ⇄ VPS (статический IP) ⇄ Telegram`.
 
-> **Входящий поток заменён на Claude Code Remote Control.** `tgbridge-agent.service`
-> в WSL держит `claude remote-control` (server mode) — локальные сессии видны и
-> управляются с claude.ai/code и из приложения Claude, код и файлы остаются на
-> домашнем ПК. Python-агент long-poll (`src/tgbridge/agent`, точка входа
+> **Входящий поток заменён на Claude Code Remote Control.** В WSL — по инстансу
+> шаблонного юнита `claude-rc@<project>` на каждый git-репозиторий первого уровня
+> в `$HOME` (`deploy/claude-rc@.service`): `claude remote-control` (server mode,
+> `--spawn worktree`) с `WorkingDirectory=%h/%i`. На claude.ai/code проекты видны
+> отдельными окружениями, новая сессия = git-worktree выбранного проекта; код и
+> файлы остаются на домашнем ПК. Python-агент long-poll (`src/tgbridge/agent`, точка входа
 > `tgbridge-agent`) и разбор очереди ботом — **legacy**: код в дереве и тестах
 > остаётся, из деплоя убран. `prompt_reply()` в очередь больше **не ставит** —
 > отвечает `BRIDGE_DISABLED_TEXT` (ссылка на claude.ai/code); команды сессий

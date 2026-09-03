@@ -3,9 +3,10 @@
 Мост `WSL (дом) ⇄ VPS (статический IP) ⇄ Telegram`.
 
 - **Уведомления наружу:** `tgnotify "текст"` → VPS → Telegram (активно)
-- **Промпты внутрь:** заменено на Claude Code **Remote Control** — `tgbridge-agent.service`
-  в WSL держит `claude remote-control`, сессии видны и управляются с claude.ai/code и
-  из приложения Claude. Прежний путь «бот → VPS-очередь → агент → `claude -p`»
+- **Промпты внутрь:** заменено на Claude Code **Remote Control** — в WSL по инстансу
+  `claude-rc@<project>` (`claude remote-control --spawn worktree`) на каждый
+  git-репозиторий в `$HOME`; на claude.ai/code проекты видны окружениями, новая
+  сессия = git-worktree проекта. Прежний путь «бот → VPS-очередь → агент → `claude -p`»
   (`src/tgbridge/agent/`) — legacy, из деплоя убран; код и тесты в дереве остаются.
 
 Домашняя машина делает только исходящие запросы — белый IP и проброс портов не нужны.
@@ -30,7 +31,7 @@ cp .env.example .env                 # заполнить значения
 
 ```bash
 uv run tgbridge-server               # VPS
-uv run tgbridge-agent                # WSL — legacy; в деплое: claude remote-control --name wsl-home
+uv run tgbridge-agent                # WSL — legacy; в деплое: claude remote-control --spawn worktree (claude-rc@<project>)
 uv run tgnotify "проверка"           # WSL
 ```
 

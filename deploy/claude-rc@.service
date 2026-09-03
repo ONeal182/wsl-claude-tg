@@ -1,0 +1,27 @@
+# WSL (домашняя машина) — шаблонный user-юнит. Требует systemd=true в /etc/wsl.conf.
+# Один инстанс на проект: `claude-rc@monorepo`, `claude-rc@tgbridge` и т.д.
+#   systemctl --user enable --now claude-rc@monorepo
+#   systemctl --user status  claude-rc@<project>
+#   journalctl --user -u claude-rc@<project> -f      # тут URL сессии
+#
+# Держит `claude remote-control` (server mode, --spawn worktree) в %h/%i:
+# каждая новая сессия с claude.ai/code получает свой git-worktree проекта.
+# Требует `claude` в PATH и логин через claude.ai (`claude /login`).
+[Unit]
+Description=claude remote-control server for %i (--spawn worktree)
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsDirectory=%h/%i/.git
+
+[Service]
+Type=simple
+WorkingDirectory=%h/%i
+# systemd --user даёт урезанный PATH — добавляем ~/.local/bin (там claude, node)
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# echo y — снимает разовый запрос «Enable Remote Control? (y/n)» (у systemd нет TTY).
+ExecStart=/bin/sh -c 'echo y | claude remote-control --name %i --spawn worktree'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
